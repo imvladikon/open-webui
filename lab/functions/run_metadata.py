@@ -110,6 +110,26 @@ class Filter:
         # Более чистый путь на будущее - Event-функция на `chat.finished` (events.py), она
         # получает chat_id/message_id/model_id и может писать провенанс в свой стор.
 
+        # 2.5. ОБРЕЗКА. Реальный баг с демо: на длинный code-ответ модель упирается в
+        # max_tokens (проверено: finish_reason=length, completion_tokens ровно равны лимиту),
+        # ответ рвётся посреди кода, и пользователь этого НЕ ВИДИТ - просто текст, который
+        # непонятно почему кончился. Плюс незакрытый ``` ломает разметку всего сообщения.
+        # finish_reason в outlet недоступен, поэтому определяем эвристикой.
+        truncated = False
+        if content:
+            if content.count("```") % 2 == 1:          # незакрытый блок кода
+                truncated = True
+                content = content.rstrip() + "\n```"
+                msg["content"] = content
+            elif not content.rstrip().endswith((".", "!", "?", "`", ")", ":", "»", "\"")):
+                truncated = True                       # оборвано на полуслове
+        if truncated:
+            warn = ("\n\n> ⚠ **Ответ обрезан по лимиту токенов.** Подними `max_tokens` у пресета "
+                    "(реестр `lab/scripts/registry.example.json`) или попроси продолжить.")
+            if "Ответ обрезан" not in content:
+                content = content + warn
+                msg["content"] = content
+
         # 3. видимая и машиночитаемая строка метаданных (она же носитель провенанса)
         if self.valves.show_footer and content:
             bits = [f"slug={slug}"]
@@ -122,6 +142,8 @@ class Filter:
                 bits.append(f"seed={params['seed']}")
             if model_id and model_id != slug:
                 bits.append(f"preset={model_id}")
+            if truncated:
+                bits.append("truncated=1")
             footer = "\n\n<sub>" + " · ".join(bits) + "</sub>"
             if "<sub>slug=" not in content[-300:]:   # не дублировать при повторном outlet
                 msg["content"] = content + footer

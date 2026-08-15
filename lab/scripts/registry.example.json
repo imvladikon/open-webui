@@ -1,25 +1,27 @@
 {
-  "_comment": "Реестр наших чекпойнтов в чате. defaults применяются ко всем, entry их переопределяет. Правило: слаг = НЕИЗМЕНЯЕМЫЙ id чекпойнта (<run>-step<N>), никогда не переливать слаг на новые веса, иначе собранные оценки молча меняют смысл.",
-
+  "_comment": "Реестр наших чекпойнтов в чате. defaults применяются ко всем, entry их переопределяет. Правило: слаг = НЕИЗМЕНЯЕМЫЙ id чекпойнта (<run>-step<N>), никогда не переливать слаг на новые веса, иначе собранные оценки молча меняют смысл. max_tokens=16384: на 4096 длинные code-ответы обрезаются посреди кода (finish_reason=length, проверено), reasoning-модель съедает бюджет рассуждениями.",
   "defaults": {
     "params": {
       "temperature": 0.0,
       "top_p": 1.0,
       "seed": 1234,
-      "max_tokens": 4096,
-      "function_calling": "native"
+      "max_tokens": 16384,
+      "function_calling": "native",
+      "system": "Отвечай сразу итоговым результатом. НЕ рассуждай вслух, не пиши черновики, не перечисляй варианты и не комментируй свой ход мысли. Для задач на код: краткое вступление одной строкой, затем ОДИН цельный блок кода, затем 2-3 строки пояснения. Код должен быть законченным и компактным."
     },
     "tools": [],
     "filters": []
   },
-
   "models": [
     {
       "id": "ab-base",
       "slug": "qwen38-27b-gate",
       "name": "A/B · base (Qwen3.8-27B)",
       "description": "Базовая модель, точка отсчёта для сравнений. dense 27B, 1 GPU.",
-      "tags": ["ab", "base"],
+      "tags": [
+        "ab",
+        "base"
+      ],
       "tools": []
     },
     {
@@ -27,7 +29,10 @@
       "slug": "qwen35-v7-gate",
       "name": "A/B · RL v7 (agentsml215-v7-300)",
       "description": "Booking-RL, прод-ветка, MoE 35B-A3B, TP2. Тир-0: swe 0.590, bfcl 0.742.",
-      "tags": ["ab", "rl"],
+      "tags": [
+        "ab",
+        "rl"
+      ],
       "tools": []
     },
     {
@@ -35,17 +40,31 @@
       "slug": "qwen38-27b-gate",
       "name": "Debug · Qwen3.8 + инструменты",
       "description": "Та же база, но с отладочными тулзами: логпробы, выбор инструмента, диаграммы.",
-      "tags": ["debug"],
-      "tools": ["llm_debug", "diagram_tool"],
-      "params": { "temperature": 0.3 }
+      "tags": [
+        "debug"
+      ],
+      "tools": [
+        "llm_debug",
+        "diagram_tool"
+      ],
+      "params": {
+        "temperature": 0.3,
+        "max_tokens": 16384
+      }
     },
     {
       "id": "creative-base",
       "slug": "qwen38-27b-gate",
       "name": "Creative · Qwen3.8 (t=0.9)",
       "description": "Тот же слаг с высокой температурой: смотреть разброс сэмплов.",
-      "tags": ["creative"],
-      "params": { "temperature": 0.9, "top_p": 0.95, "seed": null }
+      "tags": [
+        "creative"
+      ],
+      "params": {
+        "temperature": 0.9,
+        "top_p": 0.95,
+        "seed": null
+      }
     }
   ]
 }
