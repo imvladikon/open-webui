@@ -100,3 +100,26 @@ lab/
   но нет `params` (то же в ответе `/api/models`). Читаем их из таблицы `model` напрямую.
 - Фильтр применяется в UI-контуре; через `POST /api/chat/completions` (passthrough) он не
   срабатывает, как и серверный tool-loop.
+
+## Импорт роллаутов (`scripts/import_rollout.py`)
+JSONL с траекториями превращается в чаты: `[FAIL] i0 · r=0.0` в заголовке, сворачиваемые
+тул-вызовы с аргументами и результатами, теги `outcome:fail` / `reward:zero`, папка на прогон
+и футер с trace_id, reward, target и outcome. Проверено на реальных booking-трейсах
+(`step-attribution-model/data/real_sample_v1.jsonl`): 20 сообщений, 31 output-элемент,
+тул-вызовы отрисовались, ни один не завис в "Executing".
+
+Понимает два формата: наш step-attribution (`history` со `step_idx`/`type`/`content_short`/
+`tool_name`/`tool_args`) и обычный OpenAI (`messages` с `tool_calls`/`tool_call_id`).
+
+```bash
+./scripts/import_rollout.py traces.jsonl --limit 5 --folder "rollouts/tau2" --tag rl-v7
+./scripts/import_rollout.py traces.jsonl --limit 1 --dry-run     # только разбор, без записи
+```
+Ключевое требование формата: вся цепочка ОДНОГО хода (мысли, вызовы, результаты, финальный
+текст) кладётся в ОДНО assistant-сообщение плоским списком `output`, потому что фронт матчит
+`function_call_output` с `function_call` по `call_id` внутри одного сообщения. Разложишь по
+разным сообщениям - вызовы навсегда останутся в "Executing...".
+
+Дальше поверх импортированного трейса работает всё остальное: оценки (и они попадут в выгрузку
+feedback), теги, а также контрфактический реплей - правишь результат тула и жмёшь regenerate,
+ветки видны переключателем.
