@@ -81,12 +81,10 @@ class Tools:
         if not toks:
             return "Бэкенд не вернул logprobs. Проверь, что серв их отдаёт."
 
-        spans, near = [], []
-        for t in toks:
+        near, points = [], []
+        for i, t in enumerate(toks):
             p = _p(t["logprob"])
-            b = _bucket(p)
-            txt = (t["token"] or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            spans.append(f'<span class="{b}" title="p={p:.3f}">{txt}</span>')
+            points.append({"i": i, "p": round(p, 4), "t": (t["token"] or "")[:12]})
             alts = t.get("top_logprobs") or []
             if len(alts) > 1 and (alts[0]["logprob"] - alts[1]["logprob"]) < NEAR_MISS_MARGIN \
                     and (t["token"] or "").strip():
@@ -94,47 +92,55 @@ class Tools:
 
         u = d.get("usage") or {}
         avg = sum(_p(t["logprob"]) for t in toks) / len(toks)
-        low = sum(1 for t in toks if _p(t["logprob"]) < 0.30)
-        rows = "".join(
-            f"<tr><td><code>{tok}</code></td><td>" +
-            " ".join(f'<span class="alt">{a}<b>{pp:.2f}</b></span>' for a, pp in alts) +
-            "</td></tr>" for tok, alts in near[:25])
+        low = [t for t in toks if _p(t["logprob"]) < 0.30]
 
-        page = f"""<html><head><meta charset="utf-8"><title>Confidence</title><style>
-body{{margin:0;padding:24px;background:#f5f5f5;color:{_INK};font-family:Geist,ui-sans-serif,system-ui,sans-serif}}
-h1{{font-size:1.4rem;font-weight:400;margin:0 0 4px}} .sub{{color:#4f5d75;font-size:12px;margin-bottom:18px}}
-.text{{background:#fff;border:1px solid #bfc0c0;padding:16px;line-height:2;white-space:pre-wrap;
-      font-family:Geist Mono,ui-monospace,monospace;font-size:13px;border-radius:6px}}
-.high{{background:{_SHADE['high']}}} .mid{{background:{_SHADE['mid']}}}
-.low{{background:{_SHADE['low']}}} .verylow{{background:{_SHADE['verylow']};border-bottom:2px solid {_ACCENT}}}
-table{{border-collapse:collapse;margin-top:20px;width:100%;font-size:12px}}
-td,th{{border-bottom:1px solid #bfc0c0;padding:6px 8px;text-align:left;vertical-align:top}}
-.alt{{display:inline-block;margin-right:10px;color:#4f5d75}} .alt b{{color:{_INK};margin-left:4px}}
-.legend span{{display:inline-block;padding:2px 8px;margin-right:6px;border-radius:3px;font-size:11px}}
-.stat{{display:inline-block;margin-right:18px;font-size:12px;color:#4f5d75}} .stat b{{color:{_INK}}}
-</style></head><body>
-<h1>Уверенность модели по токенам</h1>
-<div class="sub">{self.valves.MODEL} · finish_reason: <b>{ch.get('finish_reason')}</b>
-{' · ⚠ ОТВЕТ ОБРЕЗАН ПО ЛИМИТУ' if ch.get('finish_reason') == 'length' else ''}</div>
-<div class="legend">
-  <span class="high">p ≥ 0.90</span><span class="mid">0.60-0.90</span>
-  <span class="low">0.30-0.60</span><span class="verylow">&lt; 0.30 сомнение</span>
-</div>
-<p><span class="stat">средняя уверенность <b>{avg:.3f}</b></span>
-<span class="stat">токенов <b>{len(toks)}</b></span>
-<span class="stat">неуверенных <b>{low}</b></span>
-<span class="stat">prompt <b>{u.get('prompt_tokens')}</b></span>
-<span class="stat">reasoning <b>{u.get('reasoning_tokens')}</b></span>
-<span class="stat">completion <b>{u.get('completion_tokens')}</b></span></p>
-<div class="text">{''.join(spans)}</div>
-<h2 style="font-size:1rem;font-weight:400;margin-top:26px">Почти выбрал другое ({len(near)})</h2>
-<table><tr><th>выбрано</th><th>альтернативы (p)</th></tr>{rows or '<tr><td colspan=2>нет спорных мест</td></tr>'}</table>
-</body></html>"""
+        # Компактный vega-lite: OWUI рендерит его инлайн из ~1 КБ спеки.
+        # HTML-артефакт тут НЕ используем: модель физически не дотянет 17 КБ дословного
+        # копирования (упирается в max_tokens, блок не закрывается, артефакт не рендерится).
+        step = max(1, len(points) // 120)
+        vega = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "token confidence",
+            "width": 560, "height": 130,
+            "data": {"values": points[::step]},
+            "mark": {"type": "bar"},
+            "encoding": {
+                "x": {"field": "i", "type": "quantitative", "title": "позиция токена"},
+                "y": {"field": "p", "type": "quantitative", "title": "p", "scale": {"domain": [0, 1]}},
+                "color": {"field": "p", "type": "quantitative",
+                          "scale": {"scheme": "orangered", "reverse": True}, "legend": None},
+                "tooltip": [{"field": "t", "title": "токен"}, {"field": "p", "title": "p"}],
+            },
+        }
+        near_rows = "\n".join(
+            f"| `{tok}` | " + " · ".join(f"`{a}` {pp:.2f}" for a, pp in alts) + " |"
+            for tok, alts in near[:12])
+        low_list = ", ".join(f"`{t['token']}`({_p(t['logprob']):.2f})" for t in low[:10]) or "нет"
+
+        md = f"""**Уверенность модели** · {self.valves.MODEL} · finish_reason `{ch.get('finish_reason')}`\
+{'  ⚠ **ОТВЕТ ОБРЕЗАН ПО ЛИМИТУ**' if ch.get('finish_reason') == 'length' else ''}
+
+| средняя p | токенов | неуверенных (p<0.3) | prompt | reasoning | completion |
+|---|---|---|---|---|---|
+| **{avg:.3f}** | {len(toks)} | **{len(low)}** | {u.get('prompt_tokens')} | {u.get('reasoning_tokens')} | {u.get('completion_tokens')} |
+
+```vega-lite
+{json.dumps(vega, ensure_ascii=False)}
+```
+
+**Самые неуверенные токены:** {low_list}
+
+**Почти выбрал другое** ({len(near)} мест, показаны первые 12)
+
+| выбрано | альтернативы (p) |
+|---|---|
+{near_rows or "| нет спорных мест | |"}
+"""
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {
-                "description": f"heatmap готов: средняя {avg:.2f}, неуверенных {low}", "done": True}})
-        return ("ГОТОВЫЙ HTML-ОТЧЁТ. Выведи его ДОСЛОВНО в блоке ```html, целиком, чтобы он открылся "
-                "в панели артефактов. После блока добавь одну строку вывода.\n\n```html\n" + page + "\n```")
+                "description": f"heatmap готов: средняя {avg:.2f}, неуверенных {len(low)}", "done": True}})
+        return ("ГОТОВЫЙ ОТЧЁТ. Выведи его ДОСЛОВНО, целиком (включая блок ```vega-lite — он "
+                "отрисуется графиком). После отчёта добавь максимум одну строку вывода.\n\n" + md)
 
     # ---------- 2. tool choice + args + budget ----------
     async def inspect_tool_choice(self, prompt: str, tools_json: str,
@@ -201,49 +207,46 @@ td,th{{border-bottom:1px solid #bfc0c0;padding:6px 8px;text-align:left;vertical-
         # parser health: XML утёк в контент вместо структурного вызова
         leaked = bool(re.search(r"<function=|<tool_call>", msg.get("content") or ""))
 
-        rows = "".join(
-            f"<tr><td><code>{t}</code></td><td>{p:.3f}</td><td>" +
-            " ".join(f'<span class="alt">{a}<b>{pp:.2f}</b></span>' for a, pp in alts) +
-            "</td></tr>" for t, p, alts in name_conf[:10])
-        probs = "".join(f"<li>{x}</li>" for x in problems) or "<li>нарушений схемы нет</li>"
+        rows = "\n".join(
+            f"| `{t}` | {p:.3f} | " + " · ".join(f"`{a}` {pp:.2f}" for a, pp in alts) + " |"
+            for t, p, alts in name_conf[:8])
+        probs = "\n".join(f"- {re.sub(r'</?b>|</?code>', '`', x)}" for x in problems) \
+            or "- нарушений схемы нет"
+        warns = []
+        if leaked:
+            warns.append("⚠ **Парсер не отработал:** XML утёк в content вместо структурного tool_call")
+        if ch.get("finish_reason") == "length":
+            warns.append("⚠ **Ответ обрезан по лимиту токенов**")
+        per_tool = int(schema_cost / max(len(offered), 1))
 
-        page = f"""<html><head><meta charset="utf-8"><title>Tool debug</title><style>
-body{{margin:0;padding:24px;background:#f5f5f5;color:{_INK};font-family:Geist,ui-sans-serif,system-ui,sans-serif}}
-h1{{font-size:1.4rem;font-weight:400;margin:0 0 16px}} h2{{font-size:1rem;font-weight:400;margin:24px 0 8px}}
-.card{{background:#fff;border:1px solid #bfc0c0;border-radius:6px;padding:14px 16px;margin-bottom:12px}}
-.big{{font-size:1.6rem}} .warn{{border-left:3px solid {_ACCENT};background:rgba(235,108,54,0.06)}}
-table{{border-collapse:collapse;width:100%;font-size:12px}}
-td,th{{border-bottom:1px solid #bfc0c0;padding:6px 8px;text-align:left}}
-.alt{{display:inline-block;margin-right:10px;color:#4f5d75}} .alt b{{color:{_INK};margin-left:4px}}
-code{{font-family:Geist Mono,ui-monospace,monospace;font-size:12px}}
-.stat{{display:inline-block;margin-right:22px}} .stat span{{display:block;font-size:11px;color:#4f5d75}}
-ul{{margin:6px 0 0 18px;padding:0}} li{{margin:3px 0;font-size:13px}}
-</style></head><body>
-<h1>Отладка выбора инструмента</h1>
-<div class="card">
-  <span class="stat"><b class="big">{used[0] if used else 'нет вызова'}</b><span>что позвала модель</span></span>
-  <span class="stat"><b class="big">{schema_cost}</b><span>токенов съели схемы ({len(offered)} шт)</span></span>
-  <span class="stat"><b class="big">{ch.get('finish_reason')}</b><span>finish_reason</span></span>
-</div>
-{'<div class="card warn">⚠ Парсер не отработал: XML утёк в content вместо структурного tool_call</div>' if leaked else ''}
-{'<div class="card warn">⚠ Ответ обрезан по лимиту токенов (finish_reason=length)</div>' if ch.get('finish_reason') == 'length' else ''}
-<h2>Уверенность на имени инструмента</h2>
-<table><tr><th>токен</th><th>p</th><th>что почти выбрал вместо</th></tr>
-{rows or '<tr><td colspan=3>токены имени не выделились, смотри heatmap целиком</td></tr>'}</table>
-<h2>Аргументы против схемы</h2><ul>{probs}</ul>
-<h2>Бюджет инструментов</h2>
-<div class="card">предложено: <code>{', '.join(offered) or '-'}</code><br>
-использовано: <code>{', '.join(used) or '-'}</code><br>
-не пригодилось: <code>{', '.join(unused) or '-'}</code>
-{f'<br><br>Неиспользованные схемы это чистый налог на контекст: ~{int(schema_cost/max(len(offered),1))} токенов на инструмент за каждый запрос.' if unused else ''}
-</div>
-</body></html>"""
+        md = f"""**Отладка выбора инструмента** · {self.valves.MODEL}
+
+| позвала | схемы стоили | на инструмент | finish_reason |
+|---|---|---|---|
+| **{used[0] if used else 'нет вызова'}** | **{schema_cost}** токенов ({len(offered)} шт) | ~{per_tool} | `{ch.get('finish_reason')}` |
+
+{chr(10).join(warns)}
+
+**Уверенность на имени инструмента**
+
+| токен | p | что почти выбрал вместо |
+|---|---|---|
+{rows or "| токены имени не выделились | | смотри inspect_confidence |"}
+
+**Аргументы против схемы**
+{probs}
+
+**Бюджет инструментов**
+- предложено: `{', '.join(offered) or '-'}`
+- использовано: `{', '.join(used) or '-'}`
+- не пригодилось: `{', '.join(unused) or '-'}`
+{f'- неиспользованные схемы это налог на контекст: ~{per_tool} токенов на инструмент в КАЖДОМ запросе' if unused else ''}
+"""
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {
                 "description": f"tool debug: {used[0] if used else 'без вызова'}, схемы {schema_cost} ток.",
                 "done": True}})
-        return ("ГОТОВЫЙ HTML-ОТЧЁТ. Выведи его ДОСЛОВНО в блоке ```html, целиком, чтобы он открылся "
-                "в панели артефактов. После блока одна строка вывода.\n\n```html\n" + page + "\n```")
+        return ("ГОТОВЫЙ ОТЧЁТ. Выведи его ДОСЛОВНО и целиком. После отчёта максимум одна строка вывода.\n\n" + md)
 
     # ---------- 3. loop detector ----------
     def detect_tool_loops(self, trace_json: str) -> str:
