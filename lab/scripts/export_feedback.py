@@ -88,6 +88,15 @@ def prompt_of(hist: dict, msg: dict) -> str:
     return ""
 
 
+def _history(f: dict) -> dict:
+    """snapshot.chat это ЦЕЛАЯ строка ChatModel (id/user_id/title/chat/...), а реальный чат лежит
+    в snapshot.chat.chat.history.messages. Раньше был предположен путь snapshot.chat.history —
+    он пустой. Берём вложенный chat, с фолбэком на старую форму."""
+    sc = (f.get("snapshot") or {}).get("chat") or {}
+    inner = sc.get("chat") if isinstance(sc.get("chat"), dict) else sc
+    return (inner.get("history") or {}).get("messages") or {}
+
+
 def build(feedbacks):
     by_msg, pairs = {}, []
     for f in feedbacks:
@@ -101,7 +110,7 @@ def build(feedbacks):
         if f.get("type") != "rating":
             continue
         d, meta = f.get("data") or {}, f.get("meta") or {}
-        hist = (((f.get("snapshot") or {}).get("chat") or {}).get("history") or {}).get("messages") or {}
+        hist = _history(f)
         msg = hist.get(meta.get("message_id") or "")
         if not msg:
             continue
