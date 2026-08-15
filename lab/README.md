@@ -225,3 +225,17 @@ expand (обрезан ли ответ и как продолжить), provenan
 `-old`); (3) восстановление чатов/функций/конфига из бэкапа; (4) проверка периметра той же
 curl-цепочкой, что вскрыла дыры (signin без пароля → 401, Origin не отражается). Личный eliza-токен
 после этого отозвать. Бэкапы в `.backups/`.
+
+## Слепая арена для DPO-пар (`scripts/setup_arena.py`)
+Закрывает главный пробел выгрузки feedback: одиночные лайки почти не дают пар. Арена-модель на
+каждый запрос СЛУЧАЙНО выбирает одну из под-моделей (слепо), а feedback штатно получает
+`sibling_model_ids` и реальный `selected_model_id` — то есть голос сразу образует пару под одним
+промптом. Плюс лидерборд Elo.
+```bash
+./setup_arena.py --models ab-base,ab-rl-v7 --name "Checkpoint Arena" --id ckpt-arena
+./setup_arena.py --list
+```
+Проверено: арена `ckpt-arena` появляется в селекторе, сравнивает base и RL v7. Поток: выбрать её
+в чате → задать вопрос → проголосовать → `./export_feedback.py --out dpo.jsonl` собирает пары.
+Механика по коду: выбор под-модели `middleware.py:2261` (random.choice), конфиг
+`POST /api/v1/evaluations/config` (`evaluation.arena.models`).
