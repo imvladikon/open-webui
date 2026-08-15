@@ -1,0 +1,51 @@
+{
+  "_comment": "Реестр наших чекпойнтов в чате. defaults применяются ко всем, entry их переопределяет. Правило: слаг = НЕИЗМЕНЯЕМЫЙ id чекпойнта (<run>-step<N>), никогда не переливать слаг на новые веса, иначе собранные оценки молча меняют смысл.",
+
+  "defaults": {
+    "params": {
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "seed": 1234,
+      "max_tokens": 4096,
+      "function_calling": "native"
+    },
+    "tools": [],
+    "filters": []
+  },
+
+  "models": [
+    {
+      "id": "ab-base",
+      "slug": "qwen38-27b-gate",
+      "name": "A/B · base (Qwen3.8-27B)",
+      "description": "Базовая модель, точка отсчёта для сравнений. dense 27B, 1 GPU.",
+      "tags": ["ab", "base"],
+      "tools": []
+    },
+    {
+      "id": "ab-rl-v7",
+      "slug": "qwen35-v7-gate",
+      "name": "A/B · RL v7 (agentsml215-v7-300)",
+      "description": "Booking-RL, прод-ветка, MoE 35B-A3B, TP2. Тир-0: swe 0.590, bfcl 0.742.",
+      "tags": ["ab", "rl"],
+      "tools": []
+    },
+    {
+      "id": "debug-base",
+      "slug": "qwen38-27b-gate",
+      "name": "Debug · Qwen3.8 + инструменты",
+      "description": "Та же база, но с отладочными тулзами: логпробы, выбор инструмента, диаграммы.",
+      "tags": ["debug"],
+      "tools": ["llm_debug", "diagram_tool"],
+      "params": { "temperature": 0.3 }
+    },
+    {
+      "id": "creative-base",
+      "slug": "qwen38-27b-gate",
+      "name": "Creative · Qwen3.8 (t=0.9)",
+      "description": "Тот же слаг с высокой температурой: смотреть разброс сэмплов.",
+      "tags": ["creative"],
+      "params": { "temperature": 0.9, "top_p": 0.95, "seed": null }
+    }
+  ]
+}
