@@ -14,6 +14,32 @@ description: Модель без обрыва на длинных ответах
 import os
 from pydantic import BaseModel, Field
 
+
+_ELIZA_T = "https://api.eliza.yandex.net/raw/internal/zeliboba/{slug}/v1"
+_CANDIDATES = ["qwen38-27b-gate", "qwen35-v7-gate"]
+_SLUG_CACHE = {"slug": None, "ts": 0.0}
+
+
+async def _resolve_live(preferred, token, timeout=8.0):
+    """Первый ЖИВОЙ слаг: сервы преемптятся по одному, прибитый слаг = мнимая поломка."""
+    import httpx, time as _t
+    now = _t.time()
+    if _SLUG_CACHE["slug"] and now - _SLUG_CACHE["ts"] < 90:
+        s = _SLUG_CACHE["slug"]
+        return s, _ELIZA_T.format(slug=s)
+    order = [preferred] + [c for c in _CANDIDATES if c != preferred]
+    async with httpx.AsyncClient(timeout=timeout, verify=False) as cx:
+        for slug in order:
+            try:
+                r = await cx.get(_ELIZA_T.format(slug=slug) + "/models",
+                                 headers={"Authorization": f"Bearer {token}"})
+                if r.status_code == 200:
+                    _SLUG_CACHE.update(slug=slug, ts=now)
+                    return slug, _ELIZA_T.format(slug=slug)
+            except Exception:
+                continue
+    return None, None
+
 CONT_HINT = ("Продолжи ровно с места обрыва. НЕ повторяй уже написанное, не извиняйся, "
              "не начинай заново, не добавляй вступлений. Просто продолжи текст с той же позиции.")
 
@@ -43,15 +69,19 @@ class Pipe:
         if self.valves.SYSTEM:
             msgs = [{"role": "system", "content": self.valves.SYSTEM}] + msgs
 
+        slug, base = await _resolve_live(self.valves.MODEL, self._token())
+        if not slug:
+            return ("Сейчас не отвечает ни один наш серв (вытеснение планировщиком GPU, "
+                    "подъём ~30-40 мин). Статус — модель **Serve Status** в селекторе.")
         acc, rounds, usage_total = "", 0, {"completion_tokens": 0, "prompt_tokens": 0}
         headers = {"Authorization": f"Bearer {self._token()}", "Content-Type": "application/json"}
 
         async with httpx.AsyncClient(timeout=600, verify=False) as cx:
             while rounds <= self.valves.MAX_ROUNDS:
-                payload = {"model": self.valves.MODEL, "messages": msgs, "stream": False,
+                payload = {"model": slug, "messages": msgs, "stream": False,
                            "temperature": self.valves.TEMPERATURE,
                            "max_tokens": self.valves.CHUNK_TOKENS}
-                r = await cx.post(f"{self.valves.ELIZA_BASE}/chat/completions",
+                r = await cx.post(f"{base}/chat/completions",
                                   json=payload, headers=headers)
                 if r.status_code != 200:
                     return acc + f"\n\n⚠ бэкенд вернул {r.status_code}: {r.text[:200]}"

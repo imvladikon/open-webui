@@ -12,6 +12,7 @@ description: Отладка модели прямо в чате - confidence hea
 import json
 import math
 import os
+import time
 import re
 from pydantic import BaseModel, Field
 
@@ -33,6 +34,10 @@ def _bucket(p: float) -> str:
     return "verylow"
 
 
+_ELIZA = "https://api.eliza.yandex.net/raw/internal/zeliboba/{slug}/v1"
+_CANDIDATES = ["qwen38-27b-gate", "qwen35-v7-gate"]
+_SLUG_CACHE = {"slug": None, "ts": 0.0}
+
 _SHADE = {"high": "#e8f0e6", "mid": "#fdf3e0", "low": "#fbe3d4", "verylow": "#f7c9b6"}
 _INK = "#2d3142"
 _ACCENT = "#eb6c36"
@@ -52,6 +57,32 @@ class Tools:
 
     def _token(self) -> str:
         return os.environ.get("OPENAI_API_KEYS", os.environ.get("OPENAI_API_KEY", "")).split(";")[0]
+
+    async def _resolve(self):
+        """
+        Взять первый ЖИВОЙ слаг. Сервы преемптятся по одному: бывает, что qwen38 лежит, а v7
+        работает — прибитая к одному слагу тулза выглядела бы сломанной при живой модели.
+        Кэш на 90 с, чтобы не долбить /models. (Копия lab/tools/_slug.py: плагины OWUI грузятся
+        изолированно, общий импорт между ними невозможен.)
+        """
+        import httpx
+        now = time.time()
+        if _SLUG_CACHE["slug"] and now - _SLUG_CACHE["ts"] < 90:
+            s = _SLUG_CACHE["slug"]
+            return s, _ELIZA.format(slug=s)
+        pref = self.valves.MODEL
+        order = [pref] + [c for c in _CANDIDATES if c != pref]
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        async with httpx.AsyncClient(timeout=8, verify=False) as cx:
+            for slug in order:
+                try:
+                    r = await cx.get(_ELIZA.format(slug=slug) + "/models", headers=headers)
+                    if r.status_code == 200:
+                        _SLUG_CACHE.update(slug=slug, ts=now)
+                        return slug, _ELIZA.format(slug=slug)
+                except Exception:
+                    continue
+        return None, None
 
     async def _save_report(self, name, html, md, __request__, __user__, __chat_id__,
                            __event_emitter__):
@@ -87,19 +118,24 @@ class Tools:
 
     async def _probe(self, messages, tools=None, temperature=0.0):
         import httpx
+        slug, base = await self._resolve()
+        if not slug:
+            raise RuntimeError("нет живого серва")
         payload = {
-            "model": self.valves.MODEL, "messages": messages, "temperature": temperature,
+            "model": slug, "messages": messages, "temperature": temperature,
             "max_tokens": self.valves.MAX_TOKENS, "stream": False,
             "logprobs": True, "top_logprobs": self.valves.TOP_LOGPROBS,
         }
         if tools:
             payload["tools"] = tools
         async with httpx.AsyncClient(timeout=180, verify=False) as cx:
-            r = await cx.post(f"{self.valves.ELIZA_BASE}/chat/completions", json=payload,
+            r = await cx.post(f"{base}/chat/completions", json=payload,
                               headers={"Authorization": f"Bearer {self._token()}",
                                        "Content-Type": "application/json"})
             r.raise_for_status()
-            return r.json()
+            d = r.json()
+            d["_lab_slug"] = slug          # какой слаг РЕАЛЬНО ответил (может отличаться от valves)
+            return d
 
     # ---------- 1. confidence heatmap + near-miss ----------
     async def inspect_confidence(self, prompt: str, __request__=None, __user__=None,
@@ -150,7 +186,7 @@ class Tools:
             for tok, alts in near[:12])
         low_list = ", ".join(f"`{t['token']}`({_p(t['logprob']):.2f})" for t in low[:10]) or "нет"
 
-        md = f"""**Уверенность модели** · {self.valves.MODEL} · finish_reason `{ch.get('finish_reason')}`
+        md = f"""**Уверенность модели** · {d.get("_lab_slug", self.valves.MODEL)} · finish_reason `{ch.get('finish_reason')}`
 
 | средняя p | токенов | неуверенных (p<0.3) | prompt | reasoning | completion |
 |---|---|---|---|---|---|
@@ -276,7 +312,7 @@ td,th{{border-bottom:1px solid #bfc0c0;padding:6px 8px;text-align:left}}
             warns.append("⚠ **Ответ обрезан по лимиту токенов**")
         per_tool = int(schema_cost / max(len(offered), 1))
 
-        md = f"""**Отладка выбора инструмента** · {self.valves.MODEL}
+        md = f"""**Отладка выбора инструмента** · {with_tools.get("_lab_slug", self.valves.MODEL)}
 
 | позвала | схемы стоили | на инструмент | finish_reason |
 |---|---|---|---|

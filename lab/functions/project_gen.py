@@ -15,6 +15,32 @@ import re
 import zipfile
 from pydantic import BaseModel, Field
 
+
+_ELIZA_T = "https://api.eliza.yandex.net/raw/internal/zeliboba/{slug}/v1"
+_CANDIDATES = ["qwen38-27b-gate", "qwen35-v7-gate"]
+_SLUG_CACHE = {"slug": None, "ts": 0.0}
+
+
+async def _resolve_live(preferred, token, timeout=8.0):
+    """Первый ЖИВОЙ слаг: сервы преемптятся по одному, прибитый слаг = мнимая поломка."""
+    import httpx, time as _t
+    now = _t.time()
+    if _SLUG_CACHE["slug"] and now - _SLUG_CACHE["ts"] < 90:
+        s = _SLUG_CACHE["slug"]
+        return s, _ELIZA_T.format(slug=s)
+    order = [preferred] + [c for c in _CANDIDATES if c != preferred]
+    async with httpx.AsyncClient(timeout=timeout, verify=False) as cx:
+        for slug in order:
+            try:
+                r = await cx.get(_ELIZA_T.format(slug=slug) + "/models",
+                                 headers={"Authorization": f"Bearer {token}"})
+                if r.status_code == 200:
+                    _SLUG_CACHE.update(slug=slug, ts=now)
+                    return slug, _ELIZA_T.format(slug=slug)
+            except Exception:
+                continue
+    return None, None
+
 MANIFEST_SYS = (
     "Верни ТОЛЬКО один JSON-объект и ничего больше. НЕ рассуждай, не повторяй пример, не пиши "
     "текст до или после. Ключи: project (snake_case строка) и files (массив из 3-8 объектов "
@@ -81,8 +107,10 @@ class Pipe:
         return os.environ.get("OPENAI_API_KEYS", os.environ.get("OPENAI_API_KEY", "")).split(";")[0]
 
     async def _llm(self, cx, messages, max_tokens):
-        r = await cx.post(f"{self.valves.ELIZA_BASE}/chat/completions",
-                          json={"model": self.valves.MODEL, "messages": messages,
+        base = getattr(self, "_base", self.valves.ELIZA_BASE)
+        slug = getattr(self, "_slug", self.valves.MODEL)
+        r = await cx.post(f"{base}/chat/completions",
+                          json={"model": slug, "messages": messages,
                                 "temperature": 0.2, "max_tokens": max_tokens, "stream": False},
                           headers={"Authorization": f"Bearer {self._token()}",
                                    "Content-Type": "application/json"})
@@ -146,8 +174,12 @@ class Pipe:
             return it
 
         req = (body.get("messages") or [{}])[-1].get("content", "")
+        self._slug, self._base = await _resolve_live(self.valves.MODEL, self._token())
+        if not self._slug:
+            return ("Сейчас не отвечает ни один наш серв (вытеснение планировщиком GPU). "
+                    "Статус — модель **Serve Status**.")
         async with httpx.AsyncClient(timeout=600, verify=False) as cx:
-            await emit("Планирую структуру проекта")
+            await emit(f"Планирую структуру проекта ({self._slug})")
             manifest = None
             for attempt in range(2):        # reasoning-модель со второго раза обычно чище
                 umsg = req if attempt == 0 else (
