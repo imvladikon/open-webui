@@ -38,6 +38,9 @@ python3 ./setup_arena.py --models ab-base,ab-rl-v7 --name "Checkpoint Arena (bas
 echo "########## PROJECTS (папки с системным промптом) ##########"
 python3 ./setup_projects.py --apply
 
+echo "########## PROMPTS (слэш-команды) ##########"
+python3 ./setup_prompts.py --apply
+
 echo "########## FEATURES (память, автодополнение, компакция) ##########"
 python3 ./enable_features.py --apply
 echo "(если что-то включилось впервые — перезапусти контейнер: docker restart open-webui)"
