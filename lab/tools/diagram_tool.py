@@ -10,6 +10,7 @@ description: Рисование диаграмм прямо в чате. mermaid
 # Тулза ЭМИТИТ блок прямо в сообщение через __event_emitter__ type="message",
 # поэтому рендер не зависит от того, повторит ли модель код дословно.
 import json
+import re
 import html as _html
 from pydantic import BaseModel, Field
 
@@ -85,31 +86,77 @@ class Tools:
                 "начиная с ```mermaid и заканчивая ``` — без изменений, без пояснений внутри блока. "
                 "После блока добавь максимум одну строку комментария.\n\n" + block)
 
-    async def draw_svg(self, svg: str, title: str = "", __event_emitter__=None) -> str:
+    async def draw_svg(self, svg: str, title: str = "", __request__=None, __user__=None,
+                       __event_emitter__=None, __chat_id__=None) -> str:
         """
-        Показать кастомную SVG-диаграмму в панели артефактов. Использовать, когда нужен точный editorial-контроль вёрстки, которого не даёт mermaid.
+        Сохранить кастомную SVG-диаграмму как файл и показать её карточкой в чате. Использовать, когда нужен точный контроль вёрстки, которого не даёт mermaid.
         :param svg: полный тег <svg ...>...</svg> с инлайн-стилями
-        :param title: заголовок страницы артефакта
+        :param title: заголовок диаграммы (пойдёт в имя файла)
         """
+        # 🚨 ПОЧЕМУ НЕ ЭХО. Раньше тулза возвращала HTML и просила модель скопировать его дословно
+        # в ```html. Это НЕ работает на реальных SVG: модель упирается в max_tokens, копируя
+        # разметку, блок ``` не закрывается, артефакт не рендерится (проверено на 17 КБ).
+        # Правильный путь тот же, что в project_gen: пишем файл через Files API server-side,
+        # модель не копирует НИЧЕГО, пользователь получает карточку + ссылку.
         s = (svg or "").strip()
         if "<svg" not in s.lower():
             return "Ошибка: в svg нет тега <svg>."
-        page = f"""<html><head><meta charset="utf-8"><title>{_html.escape(title or 'Diagram')}</title>
-<style>
-  body{{margin:0;padding:24px;background:{T['paper']};color:{T['ink']};
-       font-family:Geist,ui-sans-serif,system-ui,-apple-system,sans-serif}}
-  h1{{font-size:1.5rem;font-weight:400;margin:0 0 16px}}
-  svg{{max-width:100%;height:auto}}
-</style></head><body>
-{f'<h1>{_html.escape(title)}</h1>' if title else ''}
-{s}
-</body></html>"""
+        if not s.lower().startswith("<svg"):          # срезаем возможную обёртку/пояснения
+            i = s.lower().find("<svg")
+            j = s.lower().rfind("</svg>")
+            if i >= 0 and j > i:
+                s = s[i:j + 6]
+        name = re.sub(r"[^\w.-]+", "_", (title or "diagram").strip())[:60] or "diagram"
+
+        # автономная страница в наших токенах: и как .svg, и как просмотрщик
+        page = (f'<html><head><meta charset="utf-8"><title>{_html.escape(title or "Diagram")}</title>'
+                f'<style>body{{margin:0;padding:24px;background:{T["paper"]};color:{T["ink"]};'
+                f'font-family:Geist,ui-sans-serif,system-ui,sans-serif}}'
+                f'h1{{font-size:1.4rem;font-weight:400;margin:0 0 16px}}'
+                f'svg{{max-width:100%;height:auto}}</style></head><body>'
+                + (f"<h1>{_html.escape(title)}</h1>" if title else "") + s + "</body></html>")
+
+        if not __request__ or not __user__:
+            # фолбэк для не-UI контура: отдаём инлайном (мелкие SVG рендерятся и так)
+            return ("Файловый режим недоступен (нет request/user). Вот SVG инлайном:\n\n"
+                    "```html\n" + page + "\n```")
+        try:
+            import io
+            from fastapi import UploadFile
+            from open_webui.models.users import Users
+            from open_webui.models.files import Files
+            from open_webui.routers.files import upload_file_handler
+
+            user = await Users.get_user_by_id(__user__["id"])
+
+            async def put(fname, data: bytes, ctype: str, text=None):
+                f = UploadFile(file=io.BytesIO(data), filename=fname,
+                               headers={"content-type": ctype})
+                it = await upload_file_handler(__request__, file=f,
+                                               metadata={"chat_id": __chat_id__, "lab_diagram": True},
+                                               process=False, process_in_background=False, user=user)
+                if text is not None:
+                    await Files.update_file_data_by_id(it.id, {"content": text})
+                return it
+
+            svg_file = await put(f"{name}.svg", s.encode("utf-8"), "image/svg+xml", text=s)
+            html_file = await put(f"{name}.html", page.encode("utf-8"), "text/html")
+        except Exception as e:
+            return (f"Не удалось сохранить SVG как файл ({type(e).__name__}: {e}). "
+                    "Вот разметка инлайном:\n\n```html\n" + page + "\n```")
+
         if __event_emitter__:
+            await __event_emitter__({"type": "files", "data": {"files": [
+                {"type": "file", "id": svg_file.id, "name": f"{name}.svg",
+                 "size": len(s.encode()), "url": f"/api/v1/files/{svg_file.id}"},
+                {"type": "file", "id": html_file.id, "name": f"{name}.html",
+                 "size": len(page.encode()), "url": f"/api/v1/files/{html_file.id}"}]}})
             await __event_emitter__({"type": "status",
-                                     "data": {"description": "артефакт готов", "done": True}})
-        return ("ГОТОВЫЙ HTML-АРТЕФАКТ. Выведи его в ответе ДОСЛОВНО, целиком, "
-                "начиная с ```html и заканчивая ``` — тогда он откроется в панели артефактов.\n\n"
-                + "```html\n" + page + "\n```")
+                                     "data": {"description": f"SVG сохранён: {name}.svg", "done": True}})
+        return (f"Диаграмма сохранена как файл, НЕ копируй разметку в ответ. "
+                f"Ответь коротко и дай ссылки:\n\n"
+                f"[Открыть {name}.svg](/api/v1/files/{svg_file.id}/content/{name}.svg) · "
+                f"[Просмотрщик {name}.html](/api/v1/files/{html_file.id}/content/{name}.html)")
 
     def diagram_style_guide(self) -> str:
         """
