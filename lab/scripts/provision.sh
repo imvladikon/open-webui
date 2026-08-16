@@ -16,10 +16,16 @@ echo "########## FUNCTIONS ##########"
 ./install_function.sh ../functions/inspect_actions.py inspect_actions action 1
 ./install_function.sh ../functions/autocontinue.py   autocontinue   pipe   0
 ./install_function.sh ../functions/project_gen.py    project_gen    pipe   0
+./install_function.sh ../functions/serve_status.py   serve_status   pipe   0
+./install_function.sh ../functions/gpu_status.py     gpu_status     pipe   0
+./install_function.sh ../functions/chat_export.py    chat_export    action 1
 
 echo "########## TOOLS ##########"
 ./install_tool.sh ../tools/diagram_tool.py diagram_tool qwen38-27b-gate
-./install_tool.sh ../tools/llm_debug.py    llm_debug    qwen38-27b-gate
+./install_tool.sh ../tools/llm_debug.py      llm_debug      qwen38-27b-gate
+./install_tool.sh ../tools/context_budget.py context_budget qwen38-27b-gate
+./install_tool.sh ../tools/sampling_spread.py sampling_spread qwen38-27b-gate
+./install_tool.sh ../tools/plot_data.py      plot_data      qwen38-27b-gate
 
 echo "########## MODELS (пресеты чекпойнтов) ##########"
 python3 ./model_registry.py registry.example.json --apply
