@@ -53,6 +53,38 @@ class Tools:
     def _token(self) -> str:
         return os.environ.get("OPENAI_API_KEYS", os.environ.get("OPENAI_API_KEY", "")).split(";")[0]
 
+    async def _save_report(self, name, html, md, __request__, __user__, __chat_id__,
+                           __event_emitter__):
+        """
+        Сохранить отчёт файлом и вернуть короткую ссылку.
+        🚨 ПОЧЕМУ. Раньше тулза возвращала markdown + vega-lite спеку и просила модель вывести
+        всё дословно. На реальном отчёте (120 точек) модель обрывается прямо посреди JSON —
+        проверено в UI. Модель НЕ должна копировать payload. Пишем файл через Files API
+        (как draw_svg/project_gen), модель отдаёт 1-2 строки со ссылкой.
+        """
+        if not __request__ or not __user__:
+            return None
+        try:
+            import io
+            from fastapi import UploadFile
+            from open_webui.models.users import Users
+            from open_webui.models.files import Files
+            from open_webui.routers.files import upload_file_handler
+            user = await Users.get_user_by_id(__user__["id"])
+            f = UploadFile(file=io.BytesIO(html.encode("utf-8")), filename=f"{name}.html",
+                           headers={"content-type": "text/html"})
+            it = await upload_file_handler(__request__, file=f,
+                                           metadata={"chat_id": __chat_id__, "lab_debug": True},
+                                           process=False, process_in_background=False, user=user)
+            await Files.update_file_data_by_id(it.id, {"content": md})
+            if __event_emitter__:
+                await __event_emitter__({"type": "files", "data": {"files": [
+                    {"type": "file", "id": it.id, "name": f"{name}.html",
+                     "size": len(html.encode()), "url": f"/api/v1/files/{it.id}"}]}})
+            return f"/api/v1/files/{it.id}/content/{name}.html"
+        except Exception:
+            return None
+
     async def _probe(self, messages, tools=None, temperature=0.0):
         import httpx
         payload = {
@@ -70,7 +102,8 @@ class Tools:
             return r.json()
 
     # ---------- 1. confidence heatmap + near-miss ----------
-    async def inspect_confidence(self, prompt: str, __event_emitter__=None) -> str:
+    async def inspect_confidence(self, prompt: str, __request__=None, __user__=None,
+                                 __chat_id__=None, __event_emitter__=None) -> str:
         """
         Прогнать промпт и показать ответ раскрашенным по уверенности модели (heatmap) плюс места, где модель почти выбрала другое слово. Использовать, когда надо понять, где модель "плавает" и откуда берётся галлюцинация.
         :param prompt: запрос, который надо продиагностировать
@@ -117,30 +150,54 @@ class Tools:
             for tok, alts in near[:12])
         low_list = ", ".join(f"`{t['token']}`({_p(t['logprob']):.2f})" for t in low[:10]) or "нет"
 
-        md = f"""**Уверенность модели** · {self.valves.MODEL} · finish_reason `{ch.get('finish_reason')}`\
-{'  ⚠ **ОТВЕТ ОБРЕЗАН ПО ЛИМИТУ**' if ch.get('finish_reason') == 'length' else ''}
+        md = f"""**Уверенность модели** · {self.valves.MODEL} · finish_reason `{ch.get('finish_reason')}`
 
 | средняя p | токенов | неуверенных (p<0.3) | prompt | reasoning | completion |
 |---|---|---|---|---|---|
 | **{avg:.3f}** | {len(toks)} | **{len(low)}** | {u.get('prompt_tokens')} | {u.get('reasoning_tokens')} | {u.get('completion_tokens')} |
 
-```vega-lite
-{json.dumps(vega, ensure_ascii=False)}
-```
-
 **Самые неуверенные токены:** {low_list}
-
-**Почти выбрал другое** ({len(near)} мест, показаны первые 12)
 
 | выбрано | альтернативы (p) |
 |---|---|
 {near_rows or "| нет спорных мест | |"}
 """
+        # полный визуальный отчёт (heatmap по токенам + график) уходит ФАЙЛОМ, не через модель
+        spans = []
+        for t in toks:
+            p = _p(t["logprob"])
+            e = (t["token"] or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            spans.append(f'<span class="{_bucket(p)}" title="p={p:.3f}">{e}</span>')
+        html = f"""<html><head><meta charset="utf-8"><title>Confidence</title>
+<script src="https://cdn.jsdelivr.net/npm/vega@5"></script><style>
+body{{margin:0;padding:24px;background:#f5f5f5;color:{_INK};font-family:Geist,ui-sans-serif,system-ui,sans-serif}}
+h1{{font-size:1.4rem;font-weight:400}} .t{{background:#fff;border:1px solid #bfc0c0;border-radius:6px;
+padding:16px;line-height:2;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:13px}}
+.high{{background:{_SHADE['high']}}} .mid{{background:{_SHADE['mid']}}} .low{{background:{_SHADE['low']}}}
+.verylow{{background:{_SHADE['verylow']};border-bottom:2px solid {_ACCENT}}}
+table{{border-collapse:collapse;margin-top:18px;font-size:12px;width:100%}}
+td,th{{border-bottom:1px solid #bfc0c0;padding:6px 8px;text-align:left}}
+.k{{display:inline-block;margin-right:20px;font-size:12px;color:#4f5d75}} .k b{{color:{_INK};font-size:1.3rem;display:block}}
+</style></head><body>
+<h1>Уверенность модели по токенам</h1>
+<p><span class="k"><b>{avg:.3f}</b>средняя p</span><span class="k"><b>{len(toks)}</b>токенов</span>
+<span class="k"><b>{len(low)}</b>неуверенных</span><span class="k"><b>{ch.get('finish_reason')}</b>finish_reason</span></p>
+<div class="t">{''.join(spans)}</div>
+<h2 style="font-size:1rem;font-weight:400">Почти выбрал другое ({len(near)})</h2>
+<table><tr><th>выбрано</th><th>альтернативы</th></tr>""" + "".join(
+            f"<tr><td><code>{tok}</code></td><td>" +
+            " · ".join(f"<code>{a}</code> {pp:.2f}" for a, pp in alts) + "</td></tr>"
+            for tok, alts in near[:30]) + "</table></body></html>"
+
+        link = await self._save_report("confidence", html, md, __request__, __user__,
+                                       __chat_id__, __event_emitter__)
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {
-                "description": f"heatmap готов: средняя {avg:.2f}, неуверенных {len(low)}", "done": True}})
-        return ("ГОТОВЫЙ ОТЧЁТ. Выведи его ДОСЛОВНО, целиком (включая блок ```vega-lite — он "
-                "отрисуется графиком). После отчёта добавь максимум одну строку вывода.\n\n" + md)
+                "description": f"средняя {avg:.2f}, неуверенных {len(low)}", "done": True}})
+        if link:
+            return (md + f"\nПолный heatmap по токенам: [открыть отчёт]({link}). "
+                    "Выведи таблицу выше и ссылку, НИЧЕГО не дописывая.")
+        return md + "\nВыведи таблицу дословно."
 
     # ---------- 2. tool choice + args + budget ----------
     async def inspect_tool_choice(self, prompt: str, tools_json: str,
