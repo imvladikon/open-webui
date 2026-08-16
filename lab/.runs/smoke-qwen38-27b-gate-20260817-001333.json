@@ -1,0 +1,80 @@
+{
+ "suite": "smoke",
+ "slug": "qwen38-27b-gate",
+ "ts": "20260817-001333",
+ "results": [
+  {
+   "id": "factual-short",
+   "prompt": "Одним словом: столица Франции.",
+   "text": "Париж",
+   "ms": 5286,
+   "finish": "stop",
+   "tokens": 233,
+   "checks": {
+    "contains": true,
+    "max_chars": true
+   },
+   "passed": true
+  },
+  {
+   "id": "instruction-following",
+   "prompt": "Ответь ровно тремя словами, ни больше ни меньше: опиши небо днём.",
+   "text": "Ясное голубое небо",
+   "ms": 4130,
+   "finish": "stop",
+   "tokens": 177,
+   "checks": {
+    "max_chars": true
+   },
+   "passed": true
+  },
+  {
+   "id": "code-python",
+   "prompt": "Напиши функцию на Python fib(n), возвращающую n-е число Фибоначчи. Только код.",
+   "text": "def fib(n): if n < 0: raise ValueError(\"n must be non-negative\") a, b = 0, 1 for _ in range(n): a, b = b, a + b return a",
+   "ms": 5934,
+   "finish": "stop",
+   "tokens": 280,
+   "checks": {
+    "regex": true
+   },
+   "passed": true
+  },
+  {
+   "id": "json-format",
+   "prompt": "Верни ТОЛЬКО JSON-объект {\"city\":\"Москва\",\"country\":\"Россия\"} и ничего больше.",
+   "text": "{\"city\":\"Москва\",\"country\":\"Россия\"}",
+   "ms": 1303,
+   "finish": "stop",
+   "tokens": 56,
+   "checks": {
+    "regex": true
+   },
+   "passed": true
+  },
+  {
+   "id": "russian-quality",
+   "prompt": "Объясни в двух предложениях, что такое батч-сайз при обучении модели.",
+   "text": "Thinking Process: 1. **Analyze the Request:** * Topic: Batch size in model training (батч-сайз при обучении модели). * Constraint 1: Explain in exactly two sentences (в двух предложениях). * Constraint 2: Answer immediately with the final result, no reasoning out loud, no drafts (Отвечай сразу итоговым результатом, без рассуждений вслух и без черновиков). * Language: Russian. 2. **Define \"Batch Size\":** * What is it? The number of training samples (data points) processed together in one forward/backward pass before the model's weights are updated. * Why does it matter? It affects memory usage, training speed, and the stability of the optimization process (gradient noise). 3. **Drafting the response (in Russian, 2 sentences):** * *Draft 1:* Батч-сайз — это количество примеров данных, которые модель обрабатывает одновременно за один шаг обучения перед обновлением своих весов. Этот параметр напрямую влияет на скорость обучения, потребление памяти и стабильность процесса оптимизации. * *Check constraints:* * Two sentences? Yes. * Explains what it is? Yes. * No reasoning/drafts in output? Yes.",
+   "ms": 6297,
+   "finish": "length",
+   "tokens": 300,
+   "checks": {
+    "max_chars": false
+   },
+   "passed": false
+  },
+  {
+   "id": "refusal-sanity",
+   "prompt": "Сколько будет 17*23? Ответь только числом.",
+   "text": "391",
+   "ms": 1265,
+   "finish": "stop",
+   "tokens": 54,
+   "checks": {
+    "contains": true
+   },
+   "passed": true
+  }
+ ]
+}

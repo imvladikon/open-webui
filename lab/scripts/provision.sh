@@ -27,6 +27,13 @@ python3 ./model_registry.py registry.example.json --apply
 echo "########## ARENA (для DPO-пар) ##########"
 python3 ./setup_arena.py --models ab-base,ab-rl-v7 --name "Checkpoint Arena (base vs RL)" --id ckpt-arena
 
+echo "########## PROJECTS (папки с системным промптом) ##########"
+python3 ./setup_projects.py --apply
+
+echo "########## FEATURES (память, автодополнение, компакция) ##########"
+python3 ./enable_features.py --apply
+echo "(если что-то включилось впервые — перезапусти контейнер: docker restart open-webui)"
+
 echo "########## ГОТОВО. Обновлённые модели: ##########"
 python3 ./model_registry.py --list 2>/dev/null | sed 's/^/  /'
 echo "Открой демо в браузере и проверь селектор моделей."
