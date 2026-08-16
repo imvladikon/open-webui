@@ -20,6 +20,7 @@ echo "########## FUNCTIONS ##########"
 ./install_function.sh ../functions/serve_status.py   serve_status   pipe   0
 ./install_function.sh ../functions/gpu_status.py     gpu_status     pipe   0
 ./install_function.sh ../functions/chat_export.py    chat_export    action 1
+./install_function.sh ../functions/ab_compare.py     ab_compare     pipe   0
 
 echo "########## TOOLS ##########"
 ./install_tool.sh ../tools/diagram_tool.py diagram_tool qwen38-27b-gate
