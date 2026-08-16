@@ -45,6 +45,11 @@ echo "########## FEATURES (память, автодополнение, комп�
 python3 ./enable_features.py --apply
 echo "(если что-то включилось впервые — перезапусти контейнер: docker restart open-webui)"
 
+echo "########## ВИКИ В ЧАТЕ (RAG) ##########"
+python3 ./setup_knowledge.py --apply
+python3 ./setup_rag.py --check || echo "  ^ поиск просел, смотри выше"
+# --stage/--apply у setup_rag.py разовые (кладут эмбеддер), в провижен не входят
+
 echo "########## СМОУК (каждая тулза и функция реально грузится) ##########"
 python3 ./smoke.py || echo "  ^ есть падения, смотри выше"
 
