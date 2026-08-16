@@ -79,11 +79,18 @@ def api(method, path, tok, host, body=None, raw=False):
         return code, payload
 
 
-def upload(path, name, tok, host):
-    """Заливаем файл под нужным именем. process=True — сразу считаются эмбеддинги."""
+def upload(path, name, tok, host, sha):
+    """
+    Заливаем файл под нужным именем. process=true — эмбеддинги считаются сразу.
+
+    Хеш кладём в metadata: по нему следующий запуск поймёт, что файл не менялся.
+    Без этого каждый прогон перезаливал бы всё заново, а OWUI на повторную заливку
+    того же текста отвечает «Duplicate content detected» — и коллекция остаётся пустой.
+    """
     args = ["curl", "-s", "-m", "300", "-w", "\n%{http_code}", "-X", "POST",
             "-H", f"Authorization: Bearer {tok}",
             "-F", f"file=@{path};filename={name};type=text/markdown",
+            "-F", f"metadata={json.dumps({'sha': sha, 'lab_source': name})}",
             f"{host}/api/v1/files/?process=true&process_in_background=false"]
     out = subprocess.run(args, capture_output=True, text=True).stdout
     code, payload = out.rsplit("\n", 1)[-1].strip(), out.rsplit("\n", 1)[0]
@@ -91,6 +98,27 @@ def upload(path, name, tok, host):
         return code, json.loads(payload)
     except Exception:
         return code, payload
+
+
+def manifest_path(host):
+    """Свой учёт «что уже залито»: сервер хеш заливки обратно не отдаёт."""
+    key = hashlib.sha1(host.encode()).hexdigest()[:10]
+    d = Path.home() / ".cache" / "owui-lab"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"knowledge-{key}.json"
+
+
+def load_manifest(host):
+    p = manifest_path(host)
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_manifest(host, data):
+    manifest_path(host).write_text(json.dumps(data, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
 
 
 def admin_token(container, ssh):
@@ -108,6 +136,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--reset", action="store_true",
+                    help="снести векторы и файлы коллекции и залить заново")
     ap.add_argument("--container", default=CONTAINER)
     ap.add_argument("--ssh", default=None)
     ap.add_argument("--host", default=HOST)
@@ -140,30 +170,85 @@ def main():
     else:
         print(f"Коллекция уже есть: {kb['id']}")
 
-    code, full = api("GET", f"/api/v1/knowledge/{kb['id']}", tok, a.host)
-    have = {}
-    for f in (full.get("files") or []) if isinstance(full, dict) else []:
-        have[f.get("filename") or (f.get("meta") or {}).get("name")] = f
+    def kb_files():
+        _, full = api("GET", f"/api/v1/knowledge/{kb['id']}", tok, a.host)
+        out = {}
+        for f in (full.get("files") or []) if isinstance(full, dict) else []:
+            meta = f.get("meta") or {}
+            key = f.get("filename") or meta.get("name")
+            out[key] = f
+        return out
 
+    def sha_of(entry):
+        meta = entry.get("meta") or {}
+        return (meta.get("data") or {}).get("sha") or meta.get("sha")
+
+    if a.reset:
+        # Проверка дубликата у OWUI смотрит на ВЕКТОРЫ коллекции, а не на таблицу
+        # файлов. Если прошлый прогон оборвался, чанки остаются, и любая повторная
+        # заливка того же текста получает 400 навсегда. reset чистит именно векторы.
+        print("Сбрасываю коллекцию (векторы + файлы)…")
+        for nm, f in kb_files().items():
+            api("POST", f"/api/v1/knowledge/{kb['id']}/file/remove", tok, a.host,
+                {"file_id": f["id"]})
+            api("DELETE", f"/api/v1/files/{f['id']}", tok, a.host)
+        code, _ = api("POST", f"/api/v1/knowledge/{kb['id']}/reset", tok, a.host)
+        print(f"  reset HTTP={code}")
+
+    have = kb_files()
+    # Файлы, залитые прошлыми запусками, но выпавшие из коллекции. Их надо удалить
+    # физически: OWUI считает хеш содержимого и на повторную заливку того же текста
+    # отвечает «Duplicate content detected», из-за чего коллекция остаётся пустой.
+    _, all_files = api("GET", "/api/v1/files/", tok, a.host)
+    orphans = {}
+    for f in (all_files if isinstance(all_files, list) else []):
+        nm = f.get("filename") or (f.get("meta") or {}).get("name")
+        if nm and nm in {n for n, _ in docs} and nm not in have:
+            orphans[nm] = f
+    if orphans:
+        print(f"Убираю {len(orphans)} осиротевших файлов от прошлых запусков")
+        for nm, f in orphans.items():
+            api("DELETE", f"/api/v1/files/{f['id']}", tok, a.host)
+
+    manifest = load_manifest(a.host)
     added, skipped, failed = [], [], []
     for name, path in docs:
         digest = hashlib.sha1(path.read_bytes()).hexdigest()[:12]
         old = have.get(name)
-        if old and (old.get("meta") or {}).get("data", {}).get("sha") == digest:
+        # На хеш из ответа сервера полагаться нельзя: metadata заливки в нём не
+        # возвращается. Поэтому держим свой манифест рядом со скриптом.
+        if old and (manifest.get(name) == digest or sha_of(old) == digest):
             skipped.append(name)
             continue
-        if old:  # содержимое поменялось — старую версию убираем, чтобы не двоилась
-            api("POST", f"/api/v1/knowledge/{kb['id']}/file/remove", tok, a.host,
-                {"file_id": old["id"]})
-        code, up = upload(path, name, tok, a.host)
+
+        # ВАЖЕН ПОРЯДОК: сначала ставим новое, и только при успехе убираем старое.
+        # Обратный порядок уже один раз опустошил коллекцию, когда add отвалился.
+        code, up = upload(path, name, tok, a.host, digest)
         if code != "200" or not isinstance(up, dict) or "id" not in up:
             failed.append((name, f"upload HTTP={code} {str(up)[:120]}"))
+            print(f"  [ПАД] {name}: upload HTTP={code}")
             continue
-        code2, _ = api("POST", f"/api/v1/knowledge/{kb['id']}/file/add", tok, a.host,
-                       {"file_id": up["id"]})
-        (added if code2 == "200" else failed).append(
-            name if code2 == "200" else (name, f"add HTTP={code2}"))
-        print(f"  [{'ok' if code2 == '200' else 'ПАД'}] {name}")
+        code2, resp = api("POST", f"/api/v1/knowledge/{kb['id']}/file/add", tok, a.host,
+                          {"file_id": up["id"]})
+        if code2 == "200":
+            if old:
+                api("POST", f"/api/v1/knowledge/{kb['id']}/file/remove", tok, a.host,
+                    {"file_id": old["id"]})
+                api("DELETE", f"/api/v1/files/{old['id']}", tok, a.host)
+            manifest[name] = digest
+            added.append(name)
+            print(f"  [ok] {name}")
+        elif "Duplicate content" in str(resp):
+            # Этот текст уже проиндексирован. Не ошибка: убираем лишнюю копию файла
+            # и запоминаем хеш, чтобы следующий прогон сюда вообще не заходил.
+            api("DELETE", f"/api/v1/files/{up['id']}", tok, a.host)
+            manifest[name] = digest
+            skipped.append(name)
+        else:
+            api("DELETE", f"/api/v1/files/{up['id']}", tok, a.host)
+            failed.append((name, f"add HTTP={code2} {str(resp)[:100]}"))
+            print(f"  [ПАД] {name}: add HTTP={code2}")
+    save_manifest(a.host, manifest)
 
     print(f"\nЗалито {len(added)}, без изменений {len(skipped)}, ошибок {len(failed)}")
     for n, why in failed:

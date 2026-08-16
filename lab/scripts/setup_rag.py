@@ -55,6 +55,11 @@ EVAL = [
     ("сегменты infiniband DEGRADED, ганги мрут",
      ("wiki__runbooks__training-ops-diagnostics.md", "wiki__infra-guide.md",
       "wiki__README.md", "wiki__gotchas.md")),
+    # Эти два раздела дописаны в вику после того, как eval показал, что ответа нет.
+    ("как отдать свой чекпойнт слагом в элизе",
+     "wiki__runbooks__eliza.md"),
+    ("деплой RL-env поднимает только 2 сервера, остальные висят без фейла",
+     "wiki__gotchas.md"),
 ]
 
 
