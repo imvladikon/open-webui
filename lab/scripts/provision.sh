@@ -12,6 +12,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 echo "########## FUNCTIONS ##########"
+./install_function.sh ../functions/collapse_reasoning.py collapse_reasoning filter 1
 ./install_function.sh ../functions/run_metadata.py   run_metadata   filter 1
 ./install_function.sh ../functions/inspect_actions.py inspect_actions action 1
 ./install_function.sh ../functions/autocontinue.py   autocontinue   pipe   0
