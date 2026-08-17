@@ -46,7 +46,8 @@
    ],
    "tools": [
     "llm_debug",
-    "diagram_tool"
+    "diagram_tool",
+    "make_document"
    ],
    "params": {
     "temperature": 0.3,
@@ -86,6 +87,43 @@
     "function_calling": "legacy"
    },
    "_comment": "function_calling=legacy обязателен: middleware.py разворачивает meta.knowledge в files ТОЛЬКО в legacy-режиме, при native коллекция молча игнорируется. Тулзов у пресета нет, терять нечего."
+  },
+  {
+   "id": "assistant",
+   "slug": "qwen38-27b-gate",
+   "name": "Ассистент · база (файлы, диаграммы, графики)",
+   "description": "Универсальный чат: умеет отдавать настоящие файлы pptx/pdf/docx/xlsx, диаграммы и графики.",
+   "tags": [
+    "ассистент",
+    "файлы"
+   ],
+   "tools": [
+    "make_document",
+    "diagram_tool",
+    "plot_data"
+   ],
+   "params": {
+    "system": "Отвечай сразу итоговым результатом, без рассуждений вслух. Если просят сделать файл (презентацию, PDF, Word, Excel, CSV) — ВЫЗОВИ инструмент make_document и не пиши код для генерации файла. После вызова ответь одной-двумя строками со ссылкой, содержимое файла не пересказывай."
+   }
+  },
+  {
+   "id": "assistant-v7",
+   "slug": "qwen35-v7-gate",
+   "name": "Ассистент · RL v7 (файлы, диаграммы, графики)",
+   "description": "Универсальный чат: умеет отдавать настоящие файлы pptx/pdf/docx/xlsx, диаграммы и графики.",
+   "tags": [
+    "ассистент",
+    "файлы"
+   ],
+   "tools": [
+    "make_document",
+    "diagram_tool",
+    "plot_data"
+   ],
+   "params": {
+    "system": "Отвечай сразу итоговым результатом, без рассуждений вслух. Если просят сделать файл (презентацию, PDF, Word, Excel, CSV) — ВЫЗОВИ инструмент make_document и не пиши код для генерации файла. После вызова ответь одной-двумя строками со ссылкой, содержимое файла не пересказывай."
+   }
   }
- ]
+ ],
+ "default_model": "assistant-v7"
 }

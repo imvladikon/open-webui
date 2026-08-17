@@ -150,6 +150,22 @@ def patch_in_db(body: dict, container=CONTAINER) -> bool:
     return "OK" in p.stdout
 
 
+def set_default_model(model_id, tok, host=HOST):
+    """
+    Модель по умолчанию для новых чатов.
+
+    Важно не оставлять её пустой: без неё UI открывался на первом попавшемся пайпе
+    (у нас — Auto-continue), а пайпы тулзы вызывать НЕ умеют. Человек просил pptx,
+    получал код и «не могу отправить файл» — просто потому, что был не на той модели.
+    Поля DEFAULT_PINNED_MODELS/MODEL_ORDER_LIST обязательны в теле запроса.
+    """
+    code, _ = api("POST", "/api/v1/configs/models", tok,
+                  {"DEFAULT_MODELS": model_id, "DEFAULT_PINNED_MODELS": "",
+                   "MODEL_ORDER_LIST": []}, host=host)
+    print(f"[def] модель по умолчанию -> {model_id} (HTTP={code})")
+    return code == "200"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("registry", nargs="?", help="путь к registry.json")
@@ -198,7 +214,9 @@ def main():
         ok += bool(upsert(entry, defaults, tok, a.dry_run or not a.apply))
     if a.apply and not a.dry_run:
         api("GET", "/api/models?refresh=true", tok, host=a.host)  # без refresh -> Model not found
-        print(f"[ok] обработано {ok}, кэш моделей обновлён")
+        if reg.get("default_model"):
+            set_default_model(reg["default_model"], tok, a.host)
+    print(f"[ok] обработано {ok}, кэш моделей обновлён")
 
 
 if __name__ == "__main__":

@@ -78,6 +78,24 @@ class Filter:
         marked = sum(1 for p in paras if _THINK_MARK.match(p))
         return marked / len(paras) >= 0.35
 
+    def _fold(self, draft: str) -> str:
+        """
+        Свернуть черновик в РОДНОЙ блок рассуждений Open WebUI.
+
+        Ключевое — `type="reasoning"`. У обычного `<details>` вид ровно как у обычного
+        текста, поэтому в чате было не отличить, где рассуждение, а где ответ (на это и
+        пожаловались). Для `type="reasoning"` фронт даёт отдельный рендер:
+        приглушённая строка «Thought for N seconds» со стрелкой (`Collapsible.svelte`),
+        а `removeDetails(content, ['reasoning', …])` вырезает блок при копировании
+        ответа и при вытаскивании артефактов — то есть ответ отделён и логически.
+
+        Свой `<summary>` фронт для этого типа игнорирует и рисует свой заголовок,
+        поэтому длину черновика кладём в него только как фолбэк для не-OWUI рендера.
+        """
+        return (f'<details type="reasoning" done="true" duration="0">\n'
+                f"<summary>{self.valves.label} · {len(draft)} символов</summary>\n\n"
+                f"{draft}\n\n</details>")
+
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
         msgs = body.get("messages") or []
         if not msgs:
@@ -99,14 +117,11 @@ class Filter:
                     "> Что делать: переспросить с явным «сразу дай результат, не рассуждай», "
                     "или взять пресет с системным промптом (папки-проекты), или поднять "
                     "`max_tokens`.\n\n"
-                    f"<details>\n<summary>Показать черновик ({len(text)} символов)</summary>\n\n"
-                    f"{text}\n\n</details>")
+                    + self._fold(text))
             return body            # не уверены — не трогаем
 
         pct = round(100 * len(draft) / len(text))
-        msg["content"] = (
-            f"<details>\n<summary>{self.valves.label} · {len(draft)} символов ({pct}% ответа)"
-            f"</summary>\n\n{draft}\n\n</details>\n\n{answer}")
+        msg["content"] = self._fold(draft) + "\n\n" + answer
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {
                 "description": f"черновик свёрнут ({pct}% текста)", "done": True}})

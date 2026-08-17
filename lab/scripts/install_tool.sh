@@ -26,10 +26,21 @@ src, tid, out = sys.argv[1], sys.argv[2], sys.argv[3]
 json.dump({"id": tid, "name": tid, "meta": {"description": f"custom tool {tid}"},
            "content": open(src).read()}, open(out, "w"))
 PY
-# 1) создать тулзу (OWUI сам посчитает specs из type-hints + docstring)
-curl -sS -o /dev/null -w 'tool create HTTP=%{http_code}\n' -X POST \
+# 1) создать тулзу (OWUI сам посчитает specs из type-hints + docstring), а если она уже
+#    есть — ОБНОВИТЬ. Раньше здесь был только create: повторный запуск получал HTTP 400,
+#    скрипт бодро писал «Готово», а в контейнере оставался старый код тулзы.
+code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
-  "$HOST/api/v1/tools/create" --data @"$TMP/tool.json"
+  "$HOST/api/v1/tools/create" --data @"$TMP/tool.json")
+if [ "$code" = "200" ]; then
+  echo "tool create HTTP=$code"
+else
+  code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+    -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
+    "$HOST/api/v1/tools/id/$TOOL_ID/update" --data @"$TMP/tool.json")
+  echo "tool update HTTP=$code"
+  [ "$code" = "200" ] || { echo "НЕ УСТАНОВИЛОСЬ: ни create, ни update"; exit 1; }
+fi
 
 # 2) workspace-модель поверх слага с привязанной тулзой + native function calling
 python3 - "$MODEL_ID" "$BASE_MODEL" "$TOOL_ID" "$TMP/model.json" <<'PY'
@@ -39,9 +50,10 @@ json.dump({"id": mid, "base_model_id": base, "name": f"{base} + tools",
            "meta": {"toolIds": [tid], "description": f"{base} с тулзой {tid}"},
            "params": {"function_calling": "native"}}, open(out, "w"))
 PY
-curl -sS -o /dev/null -w 'model create HTTP=%{http_code}\n' -X POST \
+mcode=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' \
-  "$HOST/api/v1/models/create" --data @"$TMP/model.json"
+  "$HOST/api/v1/models/create" --data @"$TMP/model.json")
+echo "model create HTTP=$mcode (400/401 = уже есть, это нормально)"
 
 # 3) ОБЯЗАТЕЛЬНО: без рефреша модель не резолвится ("Model not found")
 curl -sS -o /dev/null -w 'models refresh HTTP=%{http_code}\n' \
