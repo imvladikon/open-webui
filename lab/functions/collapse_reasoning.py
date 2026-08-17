@@ -15,7 +15,24 @@ description: Прячет ход мысли модели под спойлер �
 #
 # Ничего не удаляем: рассуждение остаётся доступно по клику. Если границу найти не удалось,
 # оставляем текст как есть — лучше показать лишнее, чем срезать ответ.
+#
+# 🚨 ДВА РЕЖИМА, И ЭТО ВАЖНО. В 0.11 сообщение хранит `output` — список блоков (message,
+# reasoning, function_call, ...), и UI рисует ИМЕННО ЕГО, а `content` держит как плоский
+# слепок. Поэтому правка одного `content` до экрана НЕ доезжает, как только был вызван
+# инструмент (сам на это попался: фильтр «работал», а в чате всё та же простыня).
+# Но outlet получает `output` deepcopy-ей и, если его изменить, middleware сохраняет блоки
+# и шлёт `chat:outlet` — правка доезжает и в базу, и в живой UI.
+#
+# Поэтому:
+#   * есть `output` → перекладываем черновик в РОДНОЙ блок `reasoning`. Это лучше спойлера:
+#     фронт сам рисует «Thought for N seconds» и вырезает блок при копировании ответа.
+#     Заодно чинится висящий `</think>` без открывающего тега — наши сервы шлют только
+#     закрывающий, а `tag_output_handler` открывает блок строго по стартовому и потому
+#     оставляет черновик простым текстом.
+#   * нет `output` (обычный чат без тулзов) → старый путь с эвристикой и `<details>`.
 import re
+import time
+import uuid
 from pydantic import BaseModel, Field
 
 # Маркеры того, что абзац — это размышление, а не ответ пользователю.
@@ -96,11 +113,80 @@ class Filter:
                 f"<summary>{self.valves.label} · {len(draft)} символов</summary>\n\n"
                 f"{draft}\n\n</details>")
 
+    # ---------- режим блоков `output` (чаты с инструментами и не только) ----------
+    @staticmethod
+    def _item_text(item):
+        return "".join(p.get("text", "") for p in (item.get("content") or [])
+                       if p.get("type") == "output_text")
+
+    @staticmethod
+    def _set_item_text(item, text):
+        parts = [p for p in (item.get("content") or []) if p.get("type") == "output_text"]
+        if parts:
+            parts[0]["text"] = text
+            item["content"] = [parts[0]]
+        else:
+            item["content"] = [{"type": "output_text", "text": text}]
+
+    def _reasoning_item(self, text):
+        """Собрать блок ровно той формы, что делает сам middleware (см. output_id('r'))."""
+        now = time.time()
+        return {"type": "reasoning", "id": "r_" + uuid.uuid4().hex[:24],
+                "status": "completed", "start_tag": "<think>", "end_tag": "</think>",
+                "attributes": {"type": "reasoning_content"},
+                "content": [{"type": "output_text", "text": text}],
+                "summary": None, "started_at": now, "ended_at": now, "duration": 0}
+
+    def _fix_output(self, output) -> bool:
+        """Разложить `message`-блоки с висящим `</think>` на reasoning + ответ."""
+        changed = False
+        new_items = []
+        for item in output:
+            if item.get("type") != "message":
+                new_items.append(item)
+                continue
+            text = self._item_text(item)
+            if "</think>" not in text:
+                new_items.append(item)
+                continue
+            # Берём ПОСЛЕДНИЙ закрывающий: в цикле с инструментами их бывает несколько.
+            head, _, tail = text.rpartition("</think>")
+            head = head.replace("<think>", "").strip()
+            tail = tail.strip()
+            if not head:
+                self._set_item_text(item, tail)
+                new_items.append(item)
+                changed = True
+                continue
+            new_items.append(self._reasoning_item(head))
+            if tail:
+                self._set_item_text(item, tail)
+                new_items.append(item)
+            # Пустой хвост = модель не дошла до ответа. Пустой message-блок не добавляем:
+            # пусть в чате будет честный «Thought …» без выдуманного ответа.
+            changed = True
+        if changed:
+            output[:] = new_items
+        return changed
+
     async def outlet(self, body: dict, __event_emitter__=None) -> dict:
         msgs = body.get("messages") or []
         if not msgs:
             return body
         msg = msgs[-1]
+
+        output = msg.get("output")
+        if output:
+            if self._fix_output(output):
+                # content держим согласованным с блоками, иначе копирование ответа
+                # и экспорт чата отдадут старый текст вместе с черновиком.
+                msg["content"] = "\n\n".join(
+                    self._item_text(i) for i in output if i.get("type") == "message").strip()
+                if __event_emitter__:
+                    await __event_emitter__({"type": "status", "data": {
+                        "description": "рассуждение свёрнуто в блок", "done": True}})
+            return body
+
         text = msg.get("content") or ""
         if len(text) < self.valves.min_chars or "<details" in text:
             return body

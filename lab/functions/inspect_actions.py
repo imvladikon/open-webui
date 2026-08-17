@@ -23,7 +23,8 @@ actions = [
     {"id": "stats", "name": "Stats: объём и код", "icon": "📐"},
 ]
 
-PROV = re.compile(r"<sub>(slug=[^<]+)</sub>")
+# и старый <sub>, и новый *курсив*: в истории чатов есть оба
+PROV = re.compile(r"(?:<sub>|\*)(slug=[^<*\n]+)(?:</sub>|\*)")
 FENCE = re.compile(r"```(\w+)?\n(.*?)```", re.S)
 
 

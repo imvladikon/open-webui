@@ -89,8 +89,34 @@ class Filter:
         slug = info.get("base_model_id") or model_id
         params = info.get("params") or _model_params(model_id)
 
+        # ГДЕ ЖИВЁТ ТЕКСТ. В 0.11 UI рисует блоки `output`, а `content` — плоский слепок.
+        # Как только был вызван инструмент, правка одного `content` до экрана не доезжает
+        # (проверено: футер писался, в чате его не было). Поэтому все правки кладём в
+        # ПОСЛЕДНИЙ message-блок, а `content` держим синхронным для копирования и экспорта.
+        # К этому моменту collapse_reasoning (priority 5) уже вынес черновик в reasoning-блок,
+        # так что последний message-блок — это чистый ответ.
+        last_item = next((i for i in reversed(out_items) if i.get("type") == "message"), None)
+
+        def _item_text(item):
+            return "".join(p.get("text", "") for p in (item.get("content") or [])
+                           if p.get("type") == "output_text")
+
+        def _write(text):
+            if last_item is not None:
+                parts = [p for p in (last_item.get("content") or [])
+                         if p.get("type") == "output_text"]
+                if parts:
+                    parts[0]["text"] = text
+                    last_item["content"] = [parts[0]]
+                else:
+                    last_item["content"] = [{"type": "output_text", "text": text}]
+                msg["content"] = "\n\n".join(
+                    _item_text(i) for i in out_items if i.get("type") == "message").strip()
+            else:
+                msg["content"] = text
+
         # 1. чистка протечки reasoning
-        content = msg.get("content") or ""
+        content = _item_text(last_item) if last_item is not None else (msg.get("content") or "")
         if self.valves.clean_reasoning and content:
             cleaned = THINK_BLOCK.sub("", content)
             if "</think>" in cleaned:              # висячий закрывающий тег без открывающего
@@ -98,7 +124,7 @@ class Filter:
             cleaned = STRAY_OPEN.sub("", cleaned)  # открытый think без закрытия
             cleaned = cleaned.strip()
             if cleaned and cleaned != content:
-                msg["content"] = cleaned
+                _write(cleaned)
                 content = cleaned
 
         # 2. провенанс.
@@ -120,7 +146,7 @@ class Filter:
             if content.count("```") % 2 == 1:          # незакрытый блок кода
                 truncated = True
                 content = content.rstrip() + "\n```"
-                msg["content"] = content
+                _write(content)
             elif not content.rstrip().endswith((".", "!", "?", "`", ")", ":", "»", "\"")):
                 truncated = True                       # оборвано на полуслове
         if truncated:
@@ -128,7 +154,7 @@ class Filter:
                     "(реестр `lab/scripts/registry.example.json`) или попроси продолжить.")
             if "Ответ обрезан" not in content:
                 content = content + warn
-                msg["content"] = content
+                _write(content)
 
         # 3. видимая и машиночитаемая строка метаданных (она же носитель провенанса)
         if self.valves.show_footer and content:
@@ -144,9 +170,12 @@ class Filter:
                 bits.append(f"preset={model_id}")
             if truncated:
                 bits.append("truncated=1")
-            footer = "\n\n<sub>" + " · ".join(bits) + "</sub>"
-            if "<sub>slug=" not in content[-300:]:   # не дублировать при повторном outlet
-                msg["content"] = content + footer
+            # 🚨 НЕ <sub>: внутри блоков `output` html-тег не рендерится, а печатается
+            # буквально («<sub>slug=…</sub>» текстом в чате). Курсив markdown работает
+            # в обоих путях. Формат остаётся машиночитаемым (k=v через ·).
+            footer = "\n\n*" + " · ".join(bits) + "*"
+            if "*slug=" not in content[-300:] and "<sub>slug=" not in content[-300:]:
+                _write(content + footer)
 
         if __event_emitter__ and dt_ms is not None:
             await __event_emitter__({"type": "status", "data": {

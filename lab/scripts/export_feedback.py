@@ -27,7 +27,8 @@ CONTAINER = "open-webui"
 HOST = "http://[::1]:3000"
 # футер, который ставит фильтр run_metadata: единственный носитель провенанса,
 # потому что из outlet персистится только content (meta/usage не доезжают)
-PROV = re.compile(r"<sub>(slug=[^<]+)</sub>")
+# и старый <sub>, и новый *курсив*: в истории чатов есть оба
+PROV = re.compile(r"(?:<sub>|\*)(slug=[^<*\n]+)(?:</sub>|\*)")
 
 
 def admin_token(container=CONTAINER) -> str:

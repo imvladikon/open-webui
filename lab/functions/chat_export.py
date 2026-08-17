@@ -16,7 +16,7 @@ actions = [
     {"id": "md", "name": "Экспорт: диалог в Markdown", "icon": "📄"},
     {"id": "jsonl", "name": "Экспорт: диалог в JSONL (датасет)", "icon": "🗃"},
 ]
-PROV = re.compile(r"\n*<sub>slug=[^<]*</sub>")     # футер run_metadata в выгрузку не тащим
+PROV = re.compile(r"\n*(?:<sub>|\*)slug=[^<*\n]*(?:</sub>|\*)")  # футер run_metadata в выгрузку не тащим
 THINK = re.compile(r"<think>.*?</think>", re.S)    # протёкшее рассуждение в датасет не тащим
 
 

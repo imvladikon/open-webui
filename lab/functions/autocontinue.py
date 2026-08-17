@@ -109,8 +109,8 @@ class Pipe:
             acc += "\n```"
         note = ""
         if rounds:
-            note = (f"\n\n<sub>склеено из {rounds + 1} частей · "
-                    f"{usage_total['completion_tokens']} токенов сгенерировано</sub>")
+            note = (f"\n\n*склеено из {rounds + 1} частей · "
+                    f"{usage_total['completion_tokens']} токенов сгенерировано*")
         if rounds > self.valves.MAX_ROUNDS:
             note += "\n\n> ⚠ Достигнут потолок продолжений, ответ может быть неполным."
         if __event_emitter__:
