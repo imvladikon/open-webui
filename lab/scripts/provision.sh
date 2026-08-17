@@ -28,6 +28,7 @@ echo "########## TOOLS ##########"
 ./install_tool.sh ../tools/context_budget.py context_budget qwen38-27b-gate
 ./install_tool.sh ../tools/sampling_spread.py sampling_spread qwen38-27b-gate
 ./install_tool.sh ../tools/plot_data.py      plot_data      qwen38-27b-gate
+./install_tool.sh ../tools/make_document.py  make_document  qwen38-27b-gate
 
 echo "########## MODELS (пресеты чекпойнтов) ##########"
 python3 ./model_registry.py registry.example.json --apply
