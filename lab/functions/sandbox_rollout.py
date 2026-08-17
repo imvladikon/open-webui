@@ -158,22 +158,43 @@ class Pipe:
                     "guests": {"type": "integer", "description": "число гостей"}},
                     "required": ["place", "time"]}}}]
 
+    @staticmethod
+    def _resolve_place(slots, asked):
+        """
+        Сопоставить название заведения с фикстурой ОДИНАКОВО для всех инструментов.
+
+        🚨 Иначе среда противоречит сама себе. Поймано на живом прогоне: `search_slots`
+        по неизвестному названию мягко подставлял первое заведение и отдавал его слоты,
+        а `book_slot` искал точное совпадение, не находил и отвечал «такого слота нет» —
+        на слот, который сам же только что предложил. Судья за это обвинил агента.
+        Среда, которая врёт, обесценивает любую оценку, поэтому резолвим в одном месте.
+        """
+        if not slots:
+            return ""
+        asked = (asked or "").strip().strip("«»\"'")
+        for key in slots:
+            if asked and (asked.lower() == key.lower()
+                          or asked.lower() in key.lower() or key.lower() in asked.lower()):
+                return key
+        return next(iter(slots))
+
     def _run_tool(self, task, name, args, state):
         slots = task.get("slots") or {}
         if name == "search_slots":
-            place = args.get("place") or next(iter(slots), "Веранда")
-            found = slots.get(place, slots.get(next(iter(slots), ""), []))
+            place = self._resolve_place(slots, args.get("place"))
+            found = list(slots.get(place) or [])
             state["offered"].update(found)
             return {"place": place, "free": found} if found else {"place": place, "free": [],
                                                                   "note": "свободных слотов нет"}
         if name == "book_slot":
-            t = str(args.get("time") or "")
-            place = args.get("place") or next(iter(slots), "")
+            t = str(args.get("time") or "").strip()
+            place = self._resolve_place(slots, args.get("place"))
             ok = t in (slots.get(place) or [])
             if ok:
                 state["booked"] = {"place": place, "time": t, "guests": args.get("guests")}
-            return {"booked": ok, "time": t,
-                    "error": None if ok else "такого свободного слота нет"}
+            return {"booked": ok, "time": t, "place": place,
+                    "error": None if ok else
+                    f"такого свободного слота нет, доступны: {slots.get(place) or []}"}
         if name == "get_order":
             oid = str(args.get("order_id") or "")
             info = slots.get(oid)
@@ -218,11 +239,12 @@ class Pipe:
             + f"\nДиалог:\n{dialog}\n\n"
             "Оцени по осям от 0 до 1 с шагом 0.25:\n"
             "- task: достигнута ли цель пользователя\n"
-            "- truth: не выдумывал ли агент факты, которых не было в ответах инструментов\n"
             "- product: качество общения, уместные уточнения, отсутствие лишней болтовни\n"
             "- efficiency: уложился ли без лишних ходов\n\n"
+            "Ось truth НЕ оценивай: она считается детерминированно по фикстурам.\n"
+            "Оценивай оси НЕЗАВИСИМО: провал по task не обязан обнулять остальные.\n\n"
             "Ответь СТРОГО одним JSON без пояснений вокруг: "
-            '{"task":0.0,"truth":0.0,"product":0.0,"efficiency":0.0,"verdict":"одна фраза",'
+            '{"task":0.0,"product":0.0,"efficiency":0.0,"verdict":"одна фраза",'
             '"failure":"главная ошибка или null"}')
         r = await self._ask(cx, self.valves.JUDGE_SLUG,
                             [{"role": "user", "content": prompt}], temp=0.0, max_tokens=500)
@@ -353,9 +375,15 @@ class Pipe:
         else:
             parts.append("🟢 **Проверка правдивости:** выдуманного времени не найдено.\n\n")
         if verdict:
-            parts.append("| ось | оценка |\n|---|---|\n")
+            # 🚨 truth берём НЕ у судьи. Истина известна из фикстур, а судья на первом же
+            # прогоне поставил truth 0.0 при нулевых галлюцинациях — просто обнулил все оси
+            # вслед за проваленной задачей. Где есть детерминированная проверка, мнение
+            # модели не нужно.
+            verdict["truth"] = 0.0 if invented else 1.0
+            parts.append("| ось | оценка | чем посчитано |\n|---|---|---|\n")
             for ax in AXES:
-                parts.append(f"| {ax} | {verdict.get(ax)} |\n")
+                how = "детерминированно по фикстурам" if ax == "truth" else "судья"
+                parts.append(f"| {ax} | {verdict.get(ax)} | {how} |\n")
             parts.append(f"\n**Вердикт судьи:** {verdict.get('verdict','')}\n\n")
             if verdict.get("failure"):
                 parts.append(f"**Главная ошибка:** {verdict['failure']}\n\n")
