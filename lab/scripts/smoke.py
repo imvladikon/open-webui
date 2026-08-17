@@ -113,6 +113,19 @@ async def main():
                 body = {"messages": [SNAP["chat"]["chat"]["history"]["messages"]["m1"],
                                      dict(SNAP["chat"]["chat"]["history"]["messages"]["m2"])],
                         "model": "qwen38-27b-gate"}
+                # Фильтр может быть ТОЛЬКО inlet (например переключатель длины ответа) —
+                # это законно, и раньше смоук считал такой фильтр упавшим.
+                if not hasattr(mod, "outlet"):
+                    out = await call(mod.inlet, {"body": body, "__event_emitter__": emit,
+                                                 "__user__": {"id": "u", "role": "admin"},
+                                                 "__metadata__": {},
+                                                 "__model__": {"id": "qwen38-27b-gate"}})
+                    r["note"] = ("только inlet, max_tokens="
+                                 + str((out or body).get("max_tokens", "не задан")))
+                    r["changed"] = True
+                    r["ok"] = True
+                    res["functions"].append(r)
+                    continue
                 before = body["messages"][-1]["content"]
                 out = await call(mod.outlet, {"body": body, "__event_emitter__": emit,
                                               "__user__": {"id": "u", "role": "admin"},

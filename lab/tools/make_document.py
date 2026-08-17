@@ -52,6 +52,15 @@ def _slug(name: str, default: str) -> str:
     return s or default
 
 
+# Модель сплошь и рядом игнорирует «каждый ## начинает слайд» и пишет по-своему:
+# «СЛАЙД 1. Название», «Slide 3:», «1. Название». Проверено на живом запросе про 25
+# слайдов: `##` не было ни одного, и вся колода схлопывалась в два слайда. Поэтому
+# распознаём и такие маркеры, иначе формально работающая тулза даёт мусор на выходе.
+_SLIDE_MARK = re.compile(
+    r"^(?:слайд|slide)\s*№?\s*\d+\s*[.:)-]?\s*(.*)$", re.I)
+_NUM_HEAD = re.compile(r"^\d{1,2}\s*[.)]\s+(\S.*)$")
+
+
 def _blocks(md: str):
     """Markdown → плоский список блоков (заголовок / пункт / абзац / код)."""
     out, in_code, buf = [], False, []
@@ -73,9 +82,23 @@ def _blocks(md: str):
         if h:
             out.append((f"h{len(h.group(1))}", h.group(2).strip()))
             continue
-        b = re.match(r"^[-*+]\s+(.*)$", s) or re.match(r"^\d+[.)]\s+(.*)$", s)
+        m = _SLIDE_MARK.match(s)
+        if m:                                   # «СЛАЙД 4. Название» = заголовок слайда
+            out.append(("h2", (m.group(1) or f"Слайд").strip(" .:-")))
+            continue
+        b = re.match(r"^[-*+]\s+(.*)$", s)
         if b:
             out.append(("li", b.group(1).strip()))
+            continue
+        n = _NUM_HEAD.match(s)
+        if n:
+            # «1. Текст» — заголовок, только если это короткая строка без точки в конце;
+            # иначе это обычный нумерованный пункт списка.
+            head = n.group(1).strip()
+            if len(head) <= 70 and not head.endswith((".", "!", "?", ";")):
+                out.append(("h2", head))
+            else:
+                out.append(("li", head))
             continue
         out.append(("p", s))
     if in_code and buf:
@@ -151,9 +174,6 @@ def _build_pptx(title: str, md: str) -> bytes:
             body_slide(head, items)
         for h, its in rest:
             body_slide(h, its)
-    if not prs.slides:                       # markdown без заголовков вообще
-        title_slide(title or "Презентация", "")
-        body_slide("Содержание", [("li", _plain(t)) for _, t in blocks] or [("p", md[:200])])
 
     buf = io.BytesIO()
     prs.save(buf)
@@ -271,6 +291,51 @@ def _build_xlsx(title: str, text: str) -> bytes:
     return buf.getvalue()
 
 
+def _looks_truncated(text: str):
+    """
+    Оборвался ли текст на полуслове.
+
+    Тулза не видит finish_reason, а модель на длинном документе упирается в
+    max_tokens ПРЯМО ВНУТРИ аргумента tool-call. Парсер серва при этом закрывает
+    JSON, вызов проходит как валидный, и раньше мы молча собирали обрезанный файл.
+    Проверено вживую: на max_tokens=4096 запрос «25 слайдов» дал finish=length и
+    текст, оборванный посреди предложения.
+    """
+    t = (text or "").rstrip()
+    if not t:
+        return None
+    if t.count("```") % 2 == 1:
+        return "не закрыт блок кода"
+    # Повтор проверяем раньше остального: зациклившийся текст тоже кончается на букве.
+    lines = [l.strip() for l in t.splitlines() if l.strip()]
+    if len(lines) >= 6 and len(set(lines[-5:])) == 1:
+        return "модель зациклилась на повторе"
+    if t[-1] in ",-—:;(«“":
+        return "текст обрывается на связке"
+    # 🚨 «кончается на букву» НЕЛЬЗЯ считать обрывом: буллиты слайдов сплошь и рядом
+    # без точки в конце. Проверено на семи реальных документах — шесть из них так и
+    # заканчиваются, и грубая проверка ругалась на исправные файлы.
+    # Настоящая примета обрыва по лимиту — оборванное СЛОВО: генерация встаёт на
+    # произвольном токене (боевой пример: «…английский инженер Джордж К»).
+    last = re.split(r"[\s]+", t)[-1].strip(".,!?;:)»\"'")
+    if last and last.isalpha() and len(last) <= 2:
+        # Регистр разводит обрубок и настоящий предлог: «Джордж К» (обрыв фамилии)
+        # против «ведёт к» (законный конец строки). Односимвольный обрубок обычно
+        # сохраняет заглавную букву исходного слова.
+        if last[0].isupper() or last.lower() not in _SHORT_WORDS:
+            return "последнее слово оборвано"
+    return None
+
+
+# Настоящие короткие слова, чтобы не принимать их за обрубок.
+_SHORT_WORDS = {
+    "в", "и", "к", "с", "о", "у", "я", "а", "на", "за", "до", "по", "из", "не", "ни",
+    "но", "то", "же", "ли", "бы", "их", "им", "ею", "ей", "ом", "их",
+    "a", "i", "an", "to", "of", "in", "is", "it", "we", "he", "as", "at", "by", "or",
+    "on", "if", "so", "up", "no", "do", "me", "my", "us",
+}
+
+
 _MIME = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -290,6 +355,7 @@ class Tools:
         kind: str,
         title: str,
         content: str,
+        append_to: str = "",
         __request__=None,
         __user__=None,
         __event_emitter__=None,
@@ -300,6 +366,7 @@ class Tools:
         :param kind: Формат файла: pptx (презентация), pdf, docx (Word), xlsx (Excel), csv, md.
         :param title: Заголовок документа и основа имени файла, например «Польза пива».
         :param content: Содержимое в Markdown. Для pptx каждый заголовок (## Название) начинает новый слайд, пункты списка становятся буллитами. Для xlsx и csv передавай таблицу: markdown-таблицу или CSV со строкой заголовков.
+        :param append_to: Необязательно. Идентификатор файла из прошлого вызова, чтобы ДОПИСАТЬ к нему content, а не создавать документ заново. Так делают длинные документы по частям и добавляют разделы к уже готовому файлу.
         """
         kind = (kind or "").strip().lower().lstrip(".")
         if kind in ("powerpoint", "ppt", "презентация"):
@@ -319,6 +386,24 @@ class Tools:
             if __event_emitter__:
                 await __event_emitter__({"type": "status",
                                          "data": {"description": desc, "done": done}})
+
+        # ДОПИСЫВАНИЕ. Исходный markdown храним в data-файла, поэтому продолжение
+        # не требует от модели заново выдавать весь документ — а именно это и упирается
+        # в max_tokens на длинных доках.
+        prefix = ""
+        if append_to:
+            try:
+                from open_webui.models.files import Files as _F
+                prev = await _F.get_file_by_id(append_to.strip())
+                prefix = ((prev.data or {}).get("content") or "") if prev else ""
+            except Exception:
+                prefix = ""
+            if not prefix:
+                return (f"Не нашёл исходник документа {append_to} и не могу дописать. "
+                        "Собери файл заново одним вызовом без append_to.")
+            content = prefix.rstrip() + "\n\n" + content.lstrip()
+
+        cut = _looks_truncated(content)
 
         await st(f"собираю {kind}…")
         try:
@@ -357,8 +442,8 @@ class Tools:
             item = await upload_file_handler(__request__, file=up,
                                              metadata={"chat_id": __chat_id__, "lab_document": True},
                                              process=False, process_in_background=False, user=user)
-            if kind in ("md", "csv"):
-                await Files.update_file_data_by_id(item.id, {"content": content})
+            # Исходный markdown кладём ВСЕГДА: это то, из чего потом делается append.
+            await Files.update_file_data_by_id(item.id, {"content": content})
         except Exception as e:
             await st("ошибка сохранения", True)
             return f"Файл собрался, но не сохранился: {type(e).__name__}: {e}"
@@ -371,9 +456,15 @@ class Tools:
             await st(f"готово: {name} ({len(data) // 1024 or 1} КБ)", True)
 
         kb = len(data) // 1024 or 1
-        # Модели явно запрещаем пересказывать содержимое: файл уже у пользователя, а пересказ
-        # съедает лимит токенов и обрывается на середине.
-        return (f"Файл готов и уже прикреплён к сообщению: **{name}** ({kb} КБ).\n\n"
-                f"[Скачать {name}]({url})\n\n"
+        warn = ""
+        if cut:
+            # Не молчим: обрезанный документ выглядит целым, и пользователь узнает об этом
+            # последним. Заодно подсказываем модели готовый способ дописать хвост.
+            warn = (f"\n\n⚠ ВНИМАНИЕ: содержимое похоже на оборванное ({cut}) — скорее всего "
+                    f"ты упёрся в лимит токенов. Скажи об этом пользователю и допиши остаток "
+                    f"вторым вызовом make_document с append_to=\"{item.id}\".")
+        return (f"Файл готов и уже прикреплён к сообщению: **{name}** ({kb} КБ). "
+                f"id={item.id}\n\n[Скачать {name}]({url}){warn}\n\n"
                 f"Ответь пользователю ОДНОЙ-ДВУМЯ строками: файл готов, вот ссылка. "
-                f"НЕ пересказывай содержимое файла и НЕ вставляй код.")
+                f"НЕ пересказывай содержимое файла и НЕ вставляй код. Чтобы дописать разделы "
+                f"в этот же документ, вызови make_document с append_to=\"{item.id}\".")

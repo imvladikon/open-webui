@@ -47,7 +47,8 @@
    "tools": [
     "llm_debug",
     "diagram_tool",
-    "make_document"
+    "make_document",
+    "lab_infra"
    ],
    "params": {
     "temperature": 0.3,
@@ -100,7 +101,8 @@
    "tools": [
     "make_document",
     "diagram_tool",
-    "plot_data"
+    "plot_data",
+    "lab_infra"
    ],
    "params": {
     "system": "Отвечай сразу итоговым результатом, без рассуждений вслух. Если просят сделать файл (презентацию, PDF, Word, Excel, CSV) — ВЫЗОВИ инструмент make_document и не пиши код для генерации файла. После вызова ответь одной-двумя строками со ссылкой, содержимое файла не пересказывай."
@@ -118,7 +120,8 @@
    "tools": [
     "make_document",
     "diagram_tool",
-    "plot_data"
+    "plot_data",
+    "lab_infra"
    ],
    "params": {
     "system": "Отвечай сразу итоговым результатом, без рассуждений вслух. Если просят сделать файл (презентацию, PDF, Word, Excel, CSV) — ВЫЗОВИ инструмент make_document и не пиши код для генерации файла. После вызова ответь одной-двумя строками со ссылкой, содержимое файла не пересказывай."
