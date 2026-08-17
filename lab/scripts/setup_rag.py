@@ -156,6 +156,31 @@ def stage(container, ssh, workdir):
     return True
 
 
+# Дефолтный RAG-шаблон — 1445 символов английских инструкций, и модель их пересказывает
+# вслух вместо ответа. Свой короче и по-русски. TOP_K=3 на нашей плотной вике режет
+# раздел пополам: симптом попадает в выдачу, а способ починки уже нет.
+RAG_TEMPLATE = """Ответь на вопрос пользователя по фрагментам ниже.
+
+Правила:
+- Отвечай сразу итогом, на русском. НЕ рассуждай вслух, не пересказывай эти правила.
+- Ставь ссылку [id] после утверждения, если у <source> есть атрибут id.
+- Если во фрагментах ответа нет, скажи это одной строкой и не выдумывай.
+
+<context>
+{{CONTEXT}}
+</context>"""
+TUNING = {"TOP_K": 5, "CHUNK_SIZE": 2000, "CHUNK_OVERLAP": 200,
+          "RAG_TEMPLATE": RAG_TEMPLATE}
+
+
+def tune(tok, host):
+    code, d = api("POST", "/api/v1/retrieval/config/update", tok, host, TUNING, timeout=120)
+    got = {k: (d or {}).get(k) for k in ("TOP_K", "CHUNK_SIZE", "CHUNK_OVERLAP")} \
+        if isinstance(d, dict) else {}
+    print(f"Настройки поиска: HTTP={code} {got}")
+    return code == "200"
+
+
 def apply(container, ssh, tok, host):
     code, _ = api("POST", "/api/v1/retrieval/embedding/update", tok, host,
                   {"RAG_EMBEDDING_ENGINE": "", "RAG_EMBEDDING_MODEL": MODEL,
@@ -163,25 +188,21 @@ def apply(container, ssh, tok, host):
     print(f"Смена эмбеддера: HTTP={code}")
     print("В конфиге теперь:", current_model(tok, host))
     print("Переиндексация…")
-    # Отсечка по времени обязательна: в логах лежат ошибки прошлых попыток, и
-    # `docker logs --tail N` выдаёт их за свежие (сам на это попался).
-    since = container_now(container, ssh)
+    # В логах лежат ошибки прошлых попыток, и `docker logs --tail N` выдаёт их за
+    # свежие. Отсечка по времени тоже подвела: `--since` без таймзоны docker читает
+    # как локальное время. Поэтому считаем строки ДО и ПОСЛЕ — часы вообще не нужны.
+    before = log_count(container, ssh, "No embedding model is loaded")
     code, _ = api("POST", "/api/v1/knowledge/reindex", tok, host)
     # Реиндекс отвечает true даже когда упали ВСЕ файлы, поэтому верим только логам.
-    fails = log_since(container, ssh, since, "No embedding model is loaded")
+    fails = log_count(container, ssh, "No embedding model is loaded") - before
     print(f"Реиндекс: HTTP={code}"
           + ("  ⚠ в логах «No embedding model is loaded» — модель НЕ загрузилась"
              if fails else "  (ошибок в логах нет)"))
     return not fails
 
 
-def container_now(container, ssh):
-    r = dexec(container, ssh, ["date", "-u", "+%Y-%m-%dT%H:%M:%S"])
-    return (r.stdout or "").strip().splitlines()[-1]
-
-
-def log_since(container, ssh, since, needle):
-    cmd = f"docker logs --since {since} {container} 2>&1 | grep -c '{needle}' || true"
+def log_count(container, ssh, needle):
+    cmd = f"docker logs {container} 2>&1 | grep -c '{needle}' || true"
     if ssh:
         r = sh(["ssh", "-o", "StrictHostKeyChecking=no", ssh, "sudo " + cmd])
     else:
@@ -240,8 +261,10 @@ def main():
         with tempfile.TemporaryDirectory() as wd:
             if not stage(a.container, a.ssh, wd):
                 return 1
-    if a.apply and not apply(a.container, a.ssh, tok, a.host):
-        return 1
+    if a.apply:
+        tune(tok, a.host)
+        if not apply(a.container, a.ssh, tok, a.host):
+            return 1
     if a.check:
         return evaluate(tok, a.host)
     return 0

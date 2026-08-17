@@ -56,7 +56,37 @@ def api(method: str, path: str, tok: str, body=None, host=HOST):
     return code, payload
 
 
-def build_model(entry: dict, defaults: dict) -> dict:
+_KB_CACHE = {}
+
+
+def knowledge_refs(names, tok):
+    """
+    Прицепить коллекции к пресету по ИМЕНИ. Модель хранит не саму коллекцию, а
+    ссылку {id,name,type,...} в `meta.knowledge` — ровно то, что кладёт фронт
+    (`toModelKnowledgeReference` в ModelEditor.svelte). Тогда вика подмешивается
+    сама, без «нажми # и вспомни, как называется коллекция».
+    """
+    if not names:
+        return []
+    if not _KB_CACHE:
+        code, kbs = api("GET", "/api/v1/knowledge/", tok)
+        items = kbs.get("items", kbs) if isinstance(kbs, dict) else (kbs or [])
+        for k in items:
+            _KB_CACHE[k.get("name")] = k
+    out = []
+    for n in names:
+        k = _KB_CACHE.get(n)
+        if not k:
+            print(f"      ! коллекции «{n}» нет, пропускаю")
+            continue
+        ref = {"id": k["id"], "name": k["name"], "type": "collection"}
+        if k.get("description"):
+            ref["description"] = k["description"]
+        out.append(ref)
+    return out
+
+
+def build_model(entry: dict, defaults: dict, tok: str = "") -> dict:
     params = dict(defaults.get("params") or {})
     params.update(entry.get("params") or {})
     meta = {
@@ -65,6 +95,9 @@ def build_model(entry: dict, defaults: dict) -> dict:
         "filterIds": entry.get("filters", defaults.get("filters", [])),
         "tags": [{"name": t} for t in entry.get("tags", [])],
     }
+    kb = knowledge_refs(entry.get("knowledge") or defaults.get("knowledge") or [], tok)
+    if kb:
+        meta["knowledge"] = kb
     body = {
         "id": entry["id"],
         "base_model_id": entry["slug"],
@@ -78,7 +111,7 @@ def build_model(entry: dict, defaults: dict) -> dict:
 
 
 def upsert(entry: dict, defaults: dict, tok: str, dry: bool):
-    body = build_model(entry, defaults)
+    body = build_model(entry, defaults, tok)
     label = f"{body['id']:22} -> {body['base_model_id']}"
     if dry:
         print(f"[dry] {label}  params={body['params']} tools={body['meta']['toolIds']}")
