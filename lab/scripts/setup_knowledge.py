@@ -171,9 +171,13 @@ def main():
         print(f"Коллекция уже есть: {kb['id']}")
 
     def kb_files():
-        _, full = api("GET", f"/api/v1/knowledge/{kb['id']}", tok, a.host)
+        # ВАЖНО: список файлов живёт на ОТДЕЛЬНОЙ ручке. `GET /knowledge/{id}` поле
+        # `files` не инлайнит, и чтение оттуда всегда давало пусто — из-за этого
+        # каждый прогон считал все документы новыми и упирался в дубликаты.
+        _, resp = api("GET", f"/api/v1/knowledge/{kb['id']}/files", tok, a.host)
+        items = resp.get("items", resp) if isinstance(resp, dict) else resp
         out = {}
-        for f in (full.get("files") or []) if isinstance(full, dict) else []:
+        for f in (items or []) if isinstance(items, list) else []:
             meta = f.get("meta") or {}
             key = f.get("filename") or meta.get("name")
             out[key] = f

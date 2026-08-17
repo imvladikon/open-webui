@@ -198,6 +198,14 @@ def apply(container, ssh, tok, host):
     print(f"Реиндекс: HTTP={code}"
           + ("  ⚠ в логах «No embedding model is loaded» — модель НЕ загрузилась"
              if fails else "  (ошибок в логах нет)"))
+    # Пустая коллекция при живом поиске — реальный сценарий: векторы переживают
+    # файлы, и по ответам подмены не видно. Поэтому сверяем счётчик, а не выдачу.
+    left = kb_file_count(tok, host)
+    if left == 0:
+        print("  ⚠ в коллекции 0 файлов, поиск идёт по осиротевшим векторам. "
+              "Чини: ./setup_knowledge.py --apply --reset")
+        return False
+    print(f"  файлов в коллекции: {left}")
     return not fails
 
 
@@ -213,6 +221,18 @@ def log_count(container, ssh, needle):
         return 0
 
 
+def kb_file_count(tok, host):
+    code, kbs = api("GET", "/api/v1/knowledge/", tok, host, timeout=60)
+    items = kbs.get("items", kbs) if isinstance(kbs, dict) else kbs
+    kb = next((k for k in (items or []) if k.get("name") == KB_NAME), None)
+    if not kb:
+        return 0
+    # Список файлов — отдельная ручка; в `GET /knowledge/{id}` его нет.
+    code, resp = api("GET", f"/api/v1/knowledge/{kb['id']}/files", tok, host, timeout=60)
+    items = resp.get("items", resp) if isinstance(resp, dict) else resp
+    return len(items) if isinstance(items, list) else 0
+
+
 def evaluate(tok, host):
     code, kbs = api("GET", "/api/v1/knowledge/", tok, host)
     items = kbs.get("items", kbs) if isinstance(kbs, dict) else kbs
@@ -221,7 +241,9 @@ def evaluate(tok, host):
         print(f"Коллекции «{KB_NAME}» нет — сначала ./setup_knowledge.py --apply")
         return 1
     hit = 0
-    print(f"\nEval поиска ({len(EVAL)} вопросов, ждём нужный файл в топ-3)")
+    n = kb_file_count(tok, host)
+    warn = "  ⚠ файлов 0: ищет по осиротевшим векторам" if n == 0 else ""
+    print(f"\nEval поиска ({len(EVAL)} вопросов, топ-3; файлов в коллекции: {n}){warn}")
     for q, want in EVAL:
         want = (want,) if isinstance(want, str) else want
         code, d = api("POST", "/api/v1/retrieval/query/collection", tok, host,
