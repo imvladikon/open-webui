@@ -21,6 +21,8 @@ echo "########## FUNCTIONS ##########"
 ./install_function.sh ../functions/gpu_status.py     gpu_status     pipe   0
 ./install_function.sh ../functions/chat_export.py    chat_export    action 1
 ./install_function.sh ../functions/ab_compare.py     ab_compare     pipe   0
+./install_function.sh ../functions/long_output.py    long_output    filter 0
+./install_function.sh ../functions/sandbox_rollout.py sandbox_rollout pipe  0
 
 echo "########## TOOLS ##########"
 ./install_tool.sh ../tools/diagram_tool.py diagram_tool qwen38-27b-gate
@@ -29,6 +31,7 @@ echo "########## TOOLS ##########"
 ./install_tool.sh ../tools/sampling_spread.py sampling_spread qwen38-27b-gate
 ./install_tool.sh ../tools/plot_data.py      plot_data      qwen38-27b-gate
 ./install_tool.sh ../tools/make_document.py  make_document  qwen38-27b-gate
+./install_tool.sh ../tools/lab_infra.py      lab_infra      qwen38-27b-gate
 
 echo "########## MODELS (пресеты чекпойнтов) ##########"
 python3 ./model_registry.py registry.example.json --apply
@@ -50,6 +53,9 @@ echo "########## ВИКИ В ЧАТЕ (RAG) ##########"
 python3 ./setup_knowledge.py --apply
 python3 ./setup_rag.py --check || echo "  ^ поиск просел, смотри выше"
 # --stage/--apply у setup_rag.py разовые (кладут эмбеддер), в провижен не входят
+
+echo "########## ЧИСТКА СЕЛЕКТОРА (режимы = опции, не модели) ##########"
+python3 ./cleanup_models.py --apply
 
 echo "########## СМОУК (каждая тулза и функция реально грузится) ##########"
 python3 ./smoke.py || echo "  ^ есть падения, смотри выше"
