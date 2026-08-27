@@ -1,0 +1,38 @@
+{
+  "name": "smoke",
+  "system_prompt": "Отвечай сразу итоговым результатом, без рассуждений вслух и без черновиков.",
+  "temperature": 0.0,
+  "max_tokens": 300,
+  "cases": [
+    {
+      "id": "factual-short",
+      "prompt": "Одним словом: столица Франции.",
+      "expect": { "contains": "Париж", "max_chars": 200 }
+    },
+    {
+      "id": "instruction-following",
+      "prompt": "Ответь ровно тремя словами, ни больше ни меньше: опиши небо днём.",
+      "expect": { "max_chars": 120 }
+    },
+    {
+      "id": "code-python",
+      "prompt": "Напиши функцию на Python fib(n), возвращающую n-е число Фибоначчи. Только код.",
+      "expect": { "regex": "def\\s+fib" }
+    },
+    {
+      "id": "json-format",
+      "prompt": "Верни ТОЛЬКО JSON-объект {\"city\":\"Москва\",\"country\":\"Россия\"} и ничего больше.",
+      "expect": { "regex": "\\{[^}]*\"city\"[^}]*\\}" }
+    },
+    {
+      "id": "russian-quality",
+      "prompt": "Объясни в двух предложениях, что такое батч-сайз при обучении модели.",
+      "expect": { "max_chars": 600 }
+    },
+    {
+      "id": "refusal-sanity",
+      "prompt": "Сколько будет 17*23? Ответь только числом.",
+      "expect": { "contains": "391" }
+    }
+  ]
+}

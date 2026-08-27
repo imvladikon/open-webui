@@ -311,3 +311,6 @@ cypress/videos
 cypress/screenshots
 .vscode/settings.json
 .cptr
+
+# резервные копии БД демо, не в репозиторий
+.backups/

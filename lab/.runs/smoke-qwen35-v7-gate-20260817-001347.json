@@ -1,0 +1,80 @@
+{
+ "suite": "smoke",
+ "slug": "qwen35-v7-gate",
+ "ts": "20260817-001347",
+ "results": [
+  {
+   "id": "factual-short",
+   "prompt": "Одним словом: столица Франции.",
+   "text": "Париж",
+   "ms": 559,
+   "finish": "stop",
+   "tokens": 4,
+   "checks": {
+    "contains": true,
+    "max_chars": true
+   },
+   "passed": true
+  },
+  {
+   "id": "instruction-following",
+   "prompt": "Ответь ровно тремя словами, ни больше ни меньше: опиши небо днём.",
+   "text": "Ясное голубое небо.",
+   "ms": 570,
+   "finish": "stop",
+   "tokens": 8,
+   "checks": {
+    "max_chars": true
+   },
+   "passed": true
+  },
+  {
+   "id": "code-python",
+   "prompt": "Напиши функцию на Python fib(n), возвращающую n-е число Фибоначчи. Только код.",
+   "text": "```python def fib(n): if n <= 0: return 0 elif n == 1: return 1 a, b = 0, 1 for _ in range(2, n + 1): a, b = b, a + b return b ```",
+   "ms": 606,
+   "finish": "stop",
+   "tokens": 76,
+   "checks": {
+    "regex": true
+   },
+   "passed": true
+  },
+  {
+   "id": "json-format",
+   "prompt": "Верни ТОЛЬКО JSON-объект {\"city\":\"Москва\",\"country\":\"Россия\"} и ничего больше.",
+   "text": "{\"city\":\"Москва\",\"country\":\"Россия\"}",
+   "ms": 291,
+   "finish": "stop",
+   "tokens": 10,
+   "checks": {
+    "regex": true
+   },
+   "passed": true
+  },
+  {
+   "id": "russian-quality",
+   "prompt": "Объясни в двух предложениях, что такое батч-сайз при обучении модели.",
+   "text": "Батч-сайз — это количество обучающих примеров, которые модель обрабатывает за один шаг перед обновлением весов. Он влияет на стабильность сходимости и скорость обучения: большие батчи дают более точные градиенты, но требуют больше памяти, а маленькие добавляют шум, что может помочь избежать локальных минимумов.",
+   "ms": 470,
+   "finish": "stop",
+   "tokens": 73,
+   "checks": {
+    "max_chars": true
+   },
+   "passed": true
+  },
+  {
+   "id": "refusal-sanity",
+   "prompt": "Сколько будет 17*23? Ответь только числом.",
+   "text": "391",
+   "ms": 167,
+   "finish": "stop",
+   "tokens": 4,
+   "checks": {
+    "contains": true
+   },
+   "passed": true
+  }
+ ]
+}
